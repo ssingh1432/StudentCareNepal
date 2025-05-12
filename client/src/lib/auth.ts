@@ -1,4 +1,4 @@
-import { User } from '@shared/schema';
+import type { User } from '@shared/schema';
 import { apiRequest } from './queryClient';
 
 // Interface for login credentials

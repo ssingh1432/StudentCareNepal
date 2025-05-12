@@ -64,13 +64,16 @@ export default function AuthPage() {
 
   // Handle login submission
   const onLoginSubmit = (values: LoginFormValues) => {
-    loginMutation.mutate(values);
+    loginMutation.mutate({
+      email: values.username, // Map username field to email
+      password: values.password
+    });
   };
 
   // Handle registration submission
   const onRegisterSubmit = (values: RegisterFormValues) => {
     registerMutation.mutate({
-      username: values.email,
+      email: values.email,
       password: values.password,
       name: values.name,
       role: "teacher", // Default role for registration through the UI

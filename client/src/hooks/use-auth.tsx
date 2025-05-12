@@ -1,6 +1,7 @@
 import { createContext, useContext, ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { User, login as authLogin, logout as authLogout, getCurrentUser, isAuthenticated, register as authRegister } from "@/lib/auth";
+import { login as authLogin, logout as authLogout, getCurrentUser, isAuthenticated, register as authRegister } from "@/lib/auth";
+import type { User } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 
