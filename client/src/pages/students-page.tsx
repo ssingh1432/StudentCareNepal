@@ -1,255 +1,227 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { useAuth } from "@/hooks/use-auth";
-import { Sidebar } from "@/components/layout/sidebar";
-import { TopBar } from "@/components/layout/top-bar";
-import { StudentList } from "@/components/student/student-list";
-import { StudentForm } from "@/components/student/student-form";
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useLocation } from 'wouter';
+import { Sidebar } from '@/components/layout/sidebar';
+import { Header } from '@/components/layout/header';
+import { StudentList } from '@/components/students/student-list';
+import { StudentForm } from '@/components/students/student-form';
+import { Button } from '@/components/ui/button';
+import { 
+  PlusIcon, 
+  SearchIcon,
+  FilterIcon 
+} from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { useAuth } from '@/hooks/use-auth';
 import { 
   Dialog, 
-  DialogContent,
-  DialogTrigger
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { useToast } from "@/hooks/use-toast";
-import { Loader2 } from "lucide-react";
-import { useLocation } from "wouter";
-import { queryClient } from "@/lib/queryClient";
-import { studentApi, teacherApi } from "@/lib/api";
-import { Student, studentValidationSchema } from "@shared/schema";
+  DialogContent, 
+  DialogDescription, 
+  DialogHeader, 
+  DialogTitle
+} from '@/components/ui/dialog';
+import { 
+  classOptions,
+  learningAbilityOptions,
+  Student
+} from '@shared/schema';
 
 export default function StudentsPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
-  const [, navigate] = useLocation();
-  const { toast } = useToast();
+  const [location] = useLocation();
   
-  // Dialog states
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  // Extract query params
+  const params = new URLSearchParams(location.split('?')[1]);
+  const initialAction = params.get('action');
   
-  // Fetch students
-  const { data: students = [], isLoading: isLoadingStudents } = useQuery({
-    queryKey: ["/api/students"],
-    queryFn: async () => {
-      const filters = user?.role === "teacher" ? { teacherId: user.id } : {};
-      return await studentApi.getStudents(filters);
-    },
+  // State for filtering and actions
+  const [classFilter, setClassFilter] = useState<string>("all");
+  const [abilityFilter, setAbilityFilter] = useState<string>("all");
+  const [teacherFilter, setTeacherFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [showAddForm, setShowAddForm] = useState<boolean>(initialAction === 'add');
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+
+  // Fetch students with filters
+  const { data: students, isLoading, refetch } = useQuery({
+    queryKey: ['/api/students', { class: classFilter === 'all' ? undefined : classFilter, teacherId: teacherFilter === 'all' ? undefined : teacherFilter }],
+    retry: false,
   });
-  
-  // Fetch teachers (admin only)
-  const { data: teachers = [] } = useQuery({
-    queryKey: ["/api/teachers"],
-    queryFn: teacherApi.getTeachers,
-    enabled: isAdmin,
+
+  // Fetch teachers if admin
+  const { data: teachers } = useQuery({
+    queryKey: ['/api/teachers'],
+    enabled: user?.role === 'admin',
+    retry: false,
   });
-  
-  // Add student mutation
-  const addStudentMutation = useMutation({
-    mutationFn: async (values: any) => {
-      const formData = new FormData();
-      Object.entries(values).forEach(([key, value]) => {
-        if (key === 'photo' && value) {
-          formData.append('photo', value as Blob);
-        } else if (value !== undefined && value !== null) {
-          formData.append(key, String(value));
-        }
-      });
-      
-      if (user?.role === 'teacher') {
-        formData.append('teacherId', String(user.id));
-      }
-      
-      return await studentApi.createStudent(formData);
-    },
-    onSuccess: () => {
-      setIsAddDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
-      toast({
-        title: "Student Added",
-        description: "The student has been added successfully.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to Add Student",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
+
+  // Filter students by search query and ability
+  const filteredStudents = students?.filter((student: Student) => {
+    const matchesSearch = searchQuery === "" || 
+      student.name.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesAbility = abilityFilter === "all" || 
+      student.learningAbility === abilityFilter;
+    
+    return matchesSearch && matchesAbility;
   });
-  
-  // Update student mutation
-  const updateStudentMutation = useMutation({
-    mutationFn: async ({ id, values }: { id: number; values: any }) => {
-      const formData = new FormData();
-      Object.entries(values).forEach(([key, value]) => {
-        if (key === 'photo' && value) {
-          formData.append('photo', value as Blob);
-        } else if (value !== undefined && value !== null) {
-          formData.append(key, String(value));
-        }
-      });
-      
-      return await studentApi.updateStudent(id, formData);
-    },
-    onSuccess: () => {
-      setIsEditDialogOpen(false);
-      setSelectedStudent(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
-      toast({
-        title: "Student Updated",
-        description: "The student has been updated successfully.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to Update Student",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-  
-  // Delete student mutation
-  const deleteStudentMutation = useMutation({
-    mutationFn: (id: number) => studentApi.deleteStudent(id),
-    onSuccess: () => {
-      setIsDeleteDialogOpen(false);
-      setSelectedStudent(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
-      toast({
-        title: "Student Deleted",
-        description: "The student has been deleted successfully.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to Delete Student",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-  
+
   // Handlers
   const handleAddStudent = () => {
-    setIsAddDialogOpen(true);
+    setEditingStudent(null);
+    setShowAddForm(true);
   };
-  
+
   const handleEditStudent = (student: Student) => {
-    setSelectedStudent(student);
-    setIsEditDialogOpen(true);
+    setEditingStudent(student);
+    setShowAddForm(true);
   };
-  
-  const handleDeleteStudent = (student: Student) => {
-    setSelectedStudent(student);
-    setIsDeleteDialogOpen(true);
+
+  const handleCloseForm = () => {
+    setShowAddForm(false);
+    setEditingStudent(null);
+    refetch();
   };
-  
-  const handleSubmitAdd = (values: any) => {
-    addStudentMutation.mutate(values);
-  };
-  
-  const handleSubmitEdit = (values: any) => {
-    if (selectedStudent) {
-      updateStudentMutation.mutate({ id: selectedStudent.id, values });
-    }
-  };
-  
-  const handleConfirmDelete = () => {
-    if (selectedStudent) {
-      deleteStudentMutation.mutate(selectedStudent.id);
-    }
-  };
-  
-  const handleViewProgress = (student: Student) => {
-    navigate(`/progress?studentId=${student.id}`);
-  };
-  
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <Sidebar />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar title="Student Management" />
+        <Header title="Student Management" />
         
         <main className="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
-          {isLoadingStudents ? (
-            <div className="flex justify-center items-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
-              <span className="ml-2 text-lg text-gray-600">Loading students...</span>
+          <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Student Management</h2>
+              <p className="mt-1 text-sm text-gray-500">Manage all students in the pre-primary section</p>
             </div>
-          ) : (
-            <StudentList
-              students={students}
-              teachers={teachers}
-              isAdmin={isAdmin}
-              onAddStudent={handleAddStudent}
-              onEditStudent={handleEditStudent}
-              onDeleteStudent={handleDeleteStudent}
-              onViewProgress={handleViewProgress}
-            />
-          )}
+            
+            <div className="mt-4 md:mt-0 flex-shrink-0">
+              <Button 
+                onClick={handleAddStudent}
+                className="inline-flex items-center px-4 py-2 bg-purple-600 hover:bg-purple-700"
+              >
+                <PlusIcon className="mr-2 h-4 w-4" />
+                Add Student
+              </Button>
+            </div>
+          </div>
           
-          {/* Add Student Dialog */}
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogContent className="sm:max-w-4xl">
-              <StudentForm
-                onSubmit={handleSubmitAdd}
-                onCancel={() => setIsAddDialogOpen(false)}
-                isSubmitting={addStudentMutation.isPending}
-                teachers={teachers}
+          {/* Filter Controls */}
+          <div className="bg-white p-4 shadow rounded-lg mb-6">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label htmlFor="class-filter" className="block text-sm font-medium text-gray-700">Class</label>
+                <Select 
+                  value={classFilter} 
+                  onValueChange={setClassFilter}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Classes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Classes</SelectItem>
+                    {classOptions.map((cls) => (
+                      <SelectItem key={cls} value={cls}>{cls}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <label htmlFor="ability-filter" className="block text-sm font-medium text-gray-700">Learning Ability</label>
+                <Select 
+                  value={abilityFilter} 
+                  onValueChange={setAbilityFilter}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Abilities" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Abilities</SelectItem>
+                    {learningAbilityOptions.map((ability) => (
+                      <SelectItem key={ability} value={ability}>{ability}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {user?.role === 'admin' && (
+                <div>
+                  <label htmlFor="teacher-filter" className="block text-sm font-medium text-gray-700">Teacher</label>
+                  <Select 
+                    value={teacherFilter} 
+                    onValueChange={setTeacherFilter}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="All Teachers" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Teachers</SelectItem>
+                      {teachers?.map((teacher: any) => (
+                        <SelectItem key={teacher.id} value={String(teacher.id)}>
+                          {teacher.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              
+              <div>
+                <label htmlFor="search-filter" className="block text-sm font-medium text-gray-700">Search</label>
+                <div className="mt-1 relative rounded-md shadow-sm">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <SearchIcon className="text-gray-400 h-4 w-4" />
+                  </div>
+                  <Input
+                    type="text"
+                    id="search-filter"
+                    className="pl-10"
+                    placeholder="Student name"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Students List */}
+          <StudentList 
+            students={filteredStudents || []} 
+            isLoading={isLoading}
+            onEdit={handleEditStudent}
+            onRefresh={refetch}
+          />
+          
+          {/* Add/Edit Student Dialog */}
+          <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
+            <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>
+                  {editingStudent ? 'Edit Student' : 'Add New Student'}
+                </DialogTitle>
+                <DialogDescription>
+                  {editingStudent 
+                    ? 'Update the student information below.' 
+                    : 'Fill out the form below to add a new student.'}
+                </DialogDescription>
+              </DialogHeader>
+              <StudentForm 
+                student={editingStudent}
+                onClose={handleCloseForm}
               />
             </DialogContent>
           </Dialog>
-          
-          {/* Edit Student Dialog */}
-          <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-            <DialogContent className="sm:max-w-4xl">
-              {selectedStudent && (
-                <StudentForm
-                  defaultValues={selectedStudent}
-                  onSubmit={handleSubmitEdit}
-                  onCancel={() => setIsEditDialogOpen(false)}
-                  isSubmitting={updateStudentMutation.isPending}
-                  teachers={teachers}
-                />
-              )}
-            </DialogContent>
-          </Dialog>
-          
-          {/* Delete Confirmation Dialog */}
-          <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete Student</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Are you sure you want to delete {selectedStudent?.name}? This action cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleConfirmDelete}
-                  className="bg-red-500 hover:bg-red-600"
-                >
-                  {deleteStudentMutation.isPending ? "Deleting..." : "Delete"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
         </main>
       </div>
     </div>

@@ -3,17 +3,16 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ProtectedRoute } from "./lib/protected-route";
 import NotFound from "@/pages/not-found";
-import { AuthProvider } from "@/hooks/use-auth";
-import { ProtectedRoute } from "@/lib/protected-route";
 import AuthPage from "@/pages/auth-page";
 import DashboardPage from "@/pages/dashboard-page";
 import StudentsPage from "@/pages/students-page";
 import ProgressPage from "@/pages/progress-page";
-import TeachingPlansPage from "@/pages/teaching-plans-page";
+import PlansPage from "@/pages/plans-page";
 import ReportsPage from "@/pages/reports-page";
 import TeachersPage from "@/pages/teachers-page";
-import AssignStudentsPage from "@/pages/assign-students-page";
+import StudentAssignmentsPage from "@/pages/student-assignments-page";
 
 function Router() {
   return (
@@ -22,10 +21,10 @@ function Router() {
       <ProtectedRoute path="/" component={DashboardPage} />
       <ProtectedRoute path="/students" component={StudentsPage} />
       <ProtectedRoute path="/progress" component={ProgressPage} />
-      <ProtectedRoute path="/teaching-plans" component={TeachingPlansPage} />
+      <ProtectedRoute path="/plans" component={PlansPage} />
       <ProtectedRoute path="/reports" component={ReportsPage} />
       <ProtectedRoute path="/teachers" component={TeachersPage} />
-      <ProtectedRoute path="/assign-students" component={AssignStudentsPage} />
+      <ProtectedRoute path="/assign-students" component={StudentAssignmentsPage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -34,12 +33,10 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
-      </AuthProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Router />
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }

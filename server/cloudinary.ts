@@ -1,4 +1,7 @@
 import { v2 as cloudinary } from 'cloudinary';
+import multer from 'multer';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
+import path from 'path';
 
 // Configure Cloudinary
 cloudinary.config({
@@ -7,77 +10,42 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET || '',
 });
 
-/**
- * Upload an image to Cloudinary
- * @param imageBuffer The image buffer to upload
- * @returns Cloudinary upload result
- */
-export async function uploadImage(imageBuffer: Buffer) {
-  try {
-    // Check if Cloudinary is configured
-    if (!process.env.CLOUDINARY_CLOUD_NAME || 
-        !process.env.CLOUDINARY_API_KEY || 
-        !process.env.CLOUDINARY_API_SECRET) {
-      throw new Error('Cloudinary API credentials not configured');
-    }
-    
-    // Convert buffer to base64
-    const base64Image = imageBuffer.toString('base64');
-    
-    // Upload to Cloudinary
-    const result = await new Promise<any>((resolve, reject) => {
-      cloudinary.uploader.upload(
-        `data:image/jpeg;base64,${base64Image}`,
-        {
-          folder: 'students', // Store in the 'students' folder
-          resource_type: 'image',
-          transformation: [
-            { width: 200, height: 200, crop: 'fill' }, // Resize to 200x200
-          ],
-        },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-    });
-    
-    return result;
-  } catch (error) {
-    console.error('Error uploading image to Cloudinary:', error);
-    throw new Error('Failed to upload image to Cloudinary');
-  }
-}
+// Create storage engine for Multer
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'students', // Store in a dedicated folder
+    allowed_formats: ['jpg', 'jpeg', 'png'], // Accept only these formats
+    transformation: [{ width: 500, height: 500, crop: 'limit' }], // Resize uploaded images
+  } as any,
+});
 
-/**
- * Delete an image from Cloudinary
- * @param publicId Cloudinary public ID of the image
- * @returns Cloudinary delete result
- */
-export async function deleteImage(publicId: string) {
-  try {
-    // Check if Cloudinary is configured
-    if (!process.env.CLOUDINARY_CLOUD_NAME || 
-        !process.env.CLOUDINARY_API_KEY || 
-        !process.env.CLOUDINARY_API_SECRET) {
-      throw new Error('Cloudinary API credentials not configured');
+// Initialize multer upload with 1MB file size limit
+const upload = multer({
+  storage,
+  limits: { fileSize: 1024 * 1024 }, // 1MB
+  fileFilter: (_req, file, cb) => {
+    // Only accept images
+    const filetypes = /jpeg|jpg|png/;
+    const mimetype = filetypes.test(file.mimetype);
+    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+    
+    if (mimetype && extname) {
+      return cb(null, true);
     }
-    
-    // Delete from Cloudinary
-    const result = await new Promise<any>((resolve, reject) => {
-      cloudinary.uploader.destroy(
-        publicId,
-        {},
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-    });
-    
-    return result;
+    cb(new Error('Only JPEG, JPG, and PNG image files are allowed'));
+  },
+});
+
+// Function to delete an image from Cloudinary
+const deleteImage = async (publicId: string): Promise<boolean> => {
+  try {
+    const result = await cloudinary.uploader.destroy(publicId);
+    return result.result === 'ok';
   } catch (error) {
     console.error('Error deleting image from Cloudinary:', error);
-    throw new Error('Failed to delete image from Cloudinary');
+    return false;
   }
-}
+};
+
+export { cloudinary, upload, deleteImage };

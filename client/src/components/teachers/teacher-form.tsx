@@ -1,185 +1,183 @@
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { insertUserSchema } from "@shared/schema";
-import { apiRequest } from "@/lib/queryClient";
-
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
+import { 
+  Form, 
+  FormControl, 
+  FormDescription, 
+  FormField, 
+  FormItem, 
+  FormLabel, 
+  FormMessage 
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Loader2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { 
+  insertUserSchema, 
+  classOptions,
+  User
+} from "@shared/schema";
 
-// Extended schema with password confirmation
-const formSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  email: z.string().email("Please enter a valid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  confirmPassword: z.string(),
-  assignedClasses: z.array(z.string()),
-  role: z.string().default("teacher"),
-}).refine(data => data.password === data.confirmPassword, {
-  message: "Passwords do not match",
-  path: ["confirmPassword"],
-});
+// Create the form schema with validation
+const formSchema = insertUserSchema.extend({
+  // Add client-side validation
+  name: z.string().min(2, { message: "Name must be at least 2 characters" }),
+  email: z.string().email({ message: "Please enter a valid email address" }),
+  username: z.string().min(3, { message: "Username must be at least 3 characters" }),
+  password: z.string().min(6, { message: "Password must be at least 6 characters" }).optional(),
+  confirmPassword: z.string().optional(),
+  assignedClasses: z.array(z.string()).min(1, { message: "Please select at least one class" }),
+}).refine(
+  (data) => !data.password || data.password === data.confirmPassword,
+  {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  }
+);
 
 type FormValues = z.infer<typeof formSchema>;
 
 interface TeacherFormProps {
-  onSuccess: () => void;
-  onCancel: () => void;
-  initialData?: Omit<FormValues, "password" | "confirmPassword"> & { id?: number };
-  isEditing?: boolean;
+  teacher?: User | null;
+  onClose: () => void;
 }
 
-export default function TeacherForm({ onSuccess, onCancel, initialData, isEditing = false }: TeacherFormProps) {
+export function TeacherForm({ teacher, onClose }: TeacherFormProps) {
   const { toast } = useToast();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  
+
+  // Set default values based on existing teacher or new teacher
+  const defaultValues: Partial<FormValues> = teacher
+    ? {
+        ...teacher,
+      }
+    : {
+        name: "",
+        email: "",
+        username: "",
+        password: "",
+        confirmPassword: "",
+        role: "teacher",
+        assignedClasses: ["Nursery"],
+      };
+
+  // Initialize form
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: initialData?.name || "",
-      email: initialData?.email || "",
-      password: "",
-      confirmPassword: "",
-      assignedClasses: initialData?.assignedClasses || [],
-      role: "teacher",
-    },
+    defaultValues,
   });
-  
-  const onSubmit = async (values: FormValues) => {
-    try {
-      setIsSubmitting(true);
+
+  // Create or update teacher mutation
+  const mutation = useMutation({
+    mutationFn: async (data: FormValues) => {
+      // Remove confirmPassword as it's not part of the schema
+      const { confirmPassword, ...teacherData } = data;
       
-      // Remove confirm password field before sending to the server
-      const { confirmPassword, ...dataToSend } = values;
-      
-      // If editing and password is empty, remove it from the request
-      if (isEditing && !dataToSend.password) {
-        const { password, ...dataWithoutPassword } = dataToSend;
-        
-        const response = await apiRequest(
-          "PUT", 
-          `/api/teachers/${initialData?.id}`, 
-          dataWithoutPassword
-        );
-        
-        toast({
-          title: "Teacher Updated",
-          description: `Successfully updated ${values.name}'s information.`,
-        });
-      } else if (isEditing) {
-        // Editing with password update
-        const response = await apiRequest(
-          "PUT", 
-          `/api/teachers/${initialData?.id}`, 
-          dataToSend
-        );
-        
-        toast({
-          title: "Teacher Updated",
-          description: `Successfully updated ${values.name}'s information.`,
-        });
-      } else {
-        // Creating new teacher
-        const response = await apiRequest("POST", "/api/teachers", dataToSend);
-        
-        toast({
-          title: "Teacher Added",
-          description: `Successfully added ${values.name} as a teacher.`,
-        });
+      // For existing teachers, if password is empty, remove it
+      if (teacher && !teacherData.password) {
+        delete teacherData.password;
       }
-      
-      onSuccess();
-    } catch (error) {
-      console.error("Error saving teacher:", error);
+
+      // Create or update teacher
+      if (teacher) {
+        return apiRequest("PUT", `/api/users/${teacher.id}`, teacherData);
+      } else {
+        return apiRequest("POST", "/api/register", teacherData);
+      }
+    },
+    onSuccess: () => {
+      toast({
+        title: teacher ? "Teacher Updated" : "Teacher Created",
+        description: teacher
+          ? "The teacher has been updated successfully."
+          : "The teacher has been created successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/teachers"] });
+      onClose();
+    },
+    onError: (error) => {
       toast({
         title: "Error",
-        description: `Failed to ${isEditing ? 'update' : 'add'} teacher. Please try again.`,
+        description: error instanceof Error ? error.message : "An error occurred",
         variant: "destructive",
       });
-    } finally {
-      setIsSubmitting(false);
-    }
+    },
+  });
+
+  // Handle form submission
+  const onSubmit = (data: FormValues) => {
+    mutation.mutate(data);
   };
-  
+
   return (
-    <Card className="w-full max-w-xl mx-auto">
-      <CardHeader>
-        <CardTitle>{isEditing ? "Edit Teacher" : "Add New Teacher"}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Full Name</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Enter teacher's name" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Email Address</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="email" 
-                      placeholder="Enter email address" 
-                      {...field} 
-                      disabled={isEditing} // Can't change email if editing
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{isEditing ? "New Password (leave blank to keep current)" : "Password"}</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="password" 
-                      placeholder={isEditing ? "Enter new password (optional)" : "Enter password"} 
-                      {...field} 
-                      required={!isEditing}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <FormField
+          control={form.control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Full Name</FormLabel>
+              <FormControl>
+                <Input placeholder="Enter teacher name" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="email"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Email Address</FormLabel>
+              <FormControl>
+                <Input type="email" placeholder="Enter email address" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="username"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Username</FormLabel>
+                <FormControl>
+                  <Input placeholder="Enter username" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="password"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{teacher ? "New Password (leave blank to keep current)" : "Password"}</FormLabel>
+                <FormControl>
+                  <Input 
+                    type="password" 
+                    placeholder={teacher ? "••••••••" : "Enter password"} 
+                    {...field} 
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {(form.watch("password") || !teacher) && (
             <FormField
               control={form.control}
               name="confirmPassword"
@@ -187,121 +185,90 @@ export default function TeacherForm({ onSuccess, onCancel, initialData, isEditin
                 <FormItem>
                   <FormLabel>Confirm Password</FormLabel>
                   <FormControl>
-                    <Input 
-                      type="password" 
-                      placeholder="Confirm password" 
-                      {...field}
-                      required={!isEditing || !!form.watch("password")}
-                    />
+                    <Input type="password" placeholder="Confirm password" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
-            <FormField
-              control={form.control}
-              name="assignedClasses"
-              render={() => (
-                <FormItem>
-                  <div className="mb-4">
-                    <FormLabel>Assign Classes</FormLabel>
-                  </div>
-                  <div className="space-y-2">
-                    <FormField
-                      control={form.control}
-                      name="assignedClasses"
-                      render={({ field }) => {
-                        return (
-                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                            <FormControl>
-                              <Checkbox
-                                checked={field.value?.includes("Nursery")}
-                                onCheckedChange={(checked) => {
-                                  const currentValue = field.value || [];
-                                  if (checked) {
-                                    field.onChange([...currentValue, "Nursery"]);
-                                  } else {
-                                    field.onChange(currentValue.filter(val => val !== "Nursery"));
+          )}
+        </div>
+
+        <FormField
+          control={form.control}
+          name="assignedClasses"
+          render={() => (
+            <FormItem>
+              <div className="mb-4">
+                <FormLabel>Assign Classes</FormLabel>
+                <FormDescription>
+                  Select the classes this teacher will be responsible for
+                </FormDescription>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {classOptions.map((cls) => (
+                  <FormField
+                    key={cls}
+                    control={form.control}
+                    name="assignedClasses"
+                    render={({ field }) => {
+                      return (
+                        <FormItem
+                          key={cls}
+                          className="flex flex-row items-start space-x-3 space-y-0"
+                        >
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value?.includes(cls)}
+                              onCheckedChange={(checked) => {
+                                const currentValue = [...(field.value || [])];
+                                if (checked) {
+                                  // Add the class if it's not already included
+                                  if (!currentValue.includes(cls)) {
+                                    field.onChange([...currentValue, cls]);
                                   }
-                                }}
-                              />
-                            </FormControl>
-                            <FormLabel className="font-normal">Nursery</FormLabel>
-                          </FormItem>
-                        );
-                      }}
-                    />
-                    
-                    <FormField
-                      control={form.control}
-                      name="assignedClasses"
-                      render={({ field }) => {
-                        return (
-                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                            <FormControl>
-                              <Checkbox
-                                checked={field.value?.includes("LKG")}
-                                onCheckedChange={(checked) => {
-                                  const currentValue = field.value || [];
-                                  if (checked) {
-                                    field.onChange([...currentValue, "LKG"]);
-                                  } else {
-                                    field.onChange(currentValue.filter(val => val !== "LKG"));
-                                  }
-                                }}
-                              />
-                            </FormControl>
-                            <FormLabel className="font-normal">LKG</FormLabel>
-                          </FormItem>
-                        );
-                      }}
-                    />
-                    
-                    <FormField
-                      control={form.control}
-                      name="assignedClasses"
-                      render={({ field }) => {
-                        return (
-                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                            <FormControl>
-                              <Checkbox
-                                checked={field.value?.includes("UKG")}
-                                onCheckedChange={(checked) => {
-                                  const currentValue = field.value || [];
-                                  if (checked) {
-                                    field.onChange([...currentValue, "UKG"]);
-                                  } else {
-                                    field.onChange(currentValue.filter(val => val !== "UKG"));
-                                  }
-                                }}
-                              />
-                            </FormControl>
-                            <FormLabel className="font-normal">UKG</FormLabel>
-                          </FormItem>
-                        );
-                      }}
-                    />
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <CardFooter className="flex justify-end space-x-2 px-0 pt-4">
-              <Button variant="outline" onClick={onCancel} type="button">
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting 
-                  ? "Saving..." 
-                  : (isEditing ? "Update Teacher" : "Add Teacher")
-                }
-              </Button>
-            </CardFooter>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
+                                } else {
+                                  // Remove the class if it's included
+                                  field.onChange(currentValue.filter((value) => value !== cls));
+                                }
+                              }}
+                            />
+                          </FormControl>
+                          <FormLabel className="font-normal">
+                            {cls}
+                          </FormLabel>
+                        </FormItem>
+                      );
+                    }}
+                  />
+                ))}
+              </div>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <div className="flex justify-end space-x-3">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            disabled={mutation.isPending}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" disabled={mutation.isPending}>
+            {mutation.isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {teacher ? "Updating..." : "Creating..."}
+              </>
+            ) : (
+              <>{teacher ? "Update" : "Create"} Teacher</>
+            )}
+          </Button>
+        </div>
+      </form>
+    </Form>
   );
 }

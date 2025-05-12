@@ -1,179 +1,316 @@
 import { useState } from "react";
 import { Student } from "@shared/schema";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { StudentCard } from "@/components/student/student-card";
+import { useAuth } from "@/hooks/use-auth";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Plus, Search } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import { transformImage } from "@/lib/cloudinary";
 
 interface StudentListProps {
   students: Student[];
-  teachers?: { id: number; name: string }[];
-  isAdmin: boolean;
-  onAddStudent: () => void;
-  onEditStudent: (student: Student) => void;
-  onDeleteStudent: (student: Student) => void;
-  onViewProgress: (student: Student) => void;
+  onEdit: (student: Student) => void;
+  onDelete: () => void;
 }
 
-export function StudentList({
-  students,
-  teachers = [],
-  isAdmin,
-  onAddStudent,
-  onEditStudent,
-  onDeleteStudent,
-  onViewProgress,
-}: StudentListProps) {
-  const [classFilter, setClassFilter] = useState<string>("all");
-  const [abilityFilter, setAbilityFilter] = useState<string>("all");
-  const [teacherFilter, setTeacherFilter] = useState<string>("all");
-  const [searchTerm, setSearchTerm] = useState<string>("");
-
-  // Apply filters
-  const filteredStudents = students.filter(student => {
-    // Class filter
-    if (classFilter !== "all" && student.class !== classFilter) {
-      return false;
-    }
+export function StudentList({ students, onEdit, onDelete }: StudentListProps) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+  
+  const isAdmin = user?.role === "admin";
+  
+  // Handle delete student
+  const handleDeleteStudent = async () => {
+    if (!studentToDelete) return;
     
-    // Ability filter
-    if (abilityFilter !== "all" && student.learningAbility !== abilityFilter) {
-      return false;
+    try {
+      await apiRequest("DELETE", `/api/students/${studentToDelete.id}`);
+      
+      toast({
+        title: "Student deleted",
+        description: `${studentToDelete.name} has been deleted successfully.`,
+      });
+      
+      setStudentToDelete(null);
+      onDelete();
+    } catch (error) {
+      toast({
+        title: "Error deleting student",
+        description: error instanceof Error ? error.message : "An unknown error occurred",
+        variant: "destructive",
+      });
     }
-    
-    // Teacher filter
-    if (isAdmin && teacherFilter !== "all" && student.teacherId !== parseInt(teacherFilter)) {
-      return false;
-    }
-    
-    // Search term
-    if (searchTerm && !student.name.toLowerCase().includes(searchTerm.toLowerCase())) {
-      return false;
-    }
-    
-    return true;
-  });
-
-  // Map teacherId to teacher name
-  const getTeacherName = (teacherId: number) => {
-    const teacher = teachers.find(t => t.id === teacherId);
-    return teacher?.name || "Unassigned";
   };
-
+  
+  // Get badge color for learning ability
+  const getLearningAbilityColor = (ability: string) => {
+    switch (ability) {
+      case 'Talented':
+        return 'bg-green-100 text-green-800';
+      case 'Average':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'Slow Learner':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+  
+  // Get badge color for writing speed
+  const getWritingSpeedColor = (speed: string) => {
+    switch (speed) {
+      case 'Speed Writing':
+        return 'bg-blue-100 text-blue-800';
+      case 'Slow Writing':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'Not Applicable':
+        return 'bg-gray-100 text-gray-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+  
+  // Pagination logic
+  const totalPages = Math.ceil(students.length / itemsPerPage);
+  const currentStudents = students.slice(
+    (currentPage - 1) * itemsPerPage, 
+    currentPage * itemsPerPage
+  );
+  
   return (
-    <div className="space-y-6">
-      <div className="bg-white p-4 shadow rounded-lg">
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          <div>
-            <label htmlFor="class-filter" className="block text-sm font-medium text-gray-700 mb-1">Class</label>
-            <Select
-              value={classFilter}
-              onValueChange={setClassFilter}
-            >
-              <SelectTrigger id="class-filter">
-                <SelectValue placeholder="All Classes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Classes</SelectItem>
-                <SelectItem value="Nursery">Nursery</SelectItem>
-                <SelectItem value="LKG">LKG</SelectItem>
-                <SelectItem value="UKG">UKG</SelectItem>
-              </SelectContent>
-            </Select>
+    <Card className="overflow-hidden">
+      <CardHeader className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+        <CardTitle className="text-lg font-medium">Students</CardTitle>
+        <Badge className="px-3 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
+          {students.length} Total
+        </Badge>
+      </CardHeader>
+      
+      {students.length > 0 ? (
+        <>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Student</TableHead>
+                  <TableHead>Class</TableHead>
+                  <TableHead>Age</TableHead>
+                  <TableHead>Learning Ability</TableHead>
+                  <TableHead>Writing Speed</TableHead>
+                  <TableHead>Teacher</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {currentStudents.map((student) => (
+                  <TableRow key={student.id}>
+                    <TableCell>
+                      <div className="flex items-center">
+                        <div className="flex-shrink-0 h-10 w-10">
+                          {student.photoUrl ? (
+                            <img 
+                              src={transformImage(student.photoUrl, { width: 120, height: 120, crop: 'fill' })} 
+                              alt={student.name}
+                              className="h-10 w-10 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
+                              <span className="text-purple-600 font-medium">
+                                {student.name.charAt(0)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="ml-4">
+                          <div className="text-sm font-medium text-gray-900">{student.name}</div>
+                          <div className="text-sm text-gray-500">
+                            {student.parentContact && `Parent: ${student.parentContact}`}
+                          </div>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm text-gray-900">{student.class}</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm text-gray-900">{student.age} years</div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={getLearningAbilityColor(student.learningAbility)}>
+                        {student.learningAbility}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={getWritingSpeedColor(student.writingSpeed)}>
+                        {student.writingSpeed}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-gray-500">
+                      {student.teacherName || "Unassigned"}
+                    </TableCell>
+                    <TableCell className="text-right space-x-3">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="text-purple-600 hover:text-purple-900"
+                        onClick={() => {
+                          // Navigate to progress view
+                          window.location.href = `/progress?studentId=${student.id}`;
+                        }}
+                      >
+                        Progress
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="text-indigo-600 hover:text-indigo-900"
+                        onClick={() => onEdit(student)}
+                      >
+                        Edit
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            className="text-red-600 hover:text-red-900"
+                            onClick={() => setStudentToDelete(student)}
+                          >
+                            Delete
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will permanently delete {studentToDelete?.name}'s record and all associated data.
+                              This action cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction 
+                              className="bg-red-600 hover:bg-red-700"
+                              onClick={handleDeleteStudent}
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
           
-          <div>
-            <label htmlFor="ability-filter" className="block text-sm font-medium text-gray-700 mb-1">Learning Ability</label>
-            <Select
-              value={abilityFilter}
-              onValueChange={setAbilityFilter}
-            >
-              <SelectTrigger id="ability-filter">
-                <SelectValue placeholder="All Abilities" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Abilities</SelectItem>
-                <SelectItem value="Talented">Talented</SelectItem>
-                <SelectItem value="Average">Average</SelectItem>
-                <SelectItem value="Slow Learner">Slow Learner</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          {isAdmin && (
-            <div>
-              <label htmlFor="teacher-filter" className="block text-sm font-medium text-gray-700 mb-1">Teacher</label>
-              <Select
-                value={teacherFilter}
-                onValueChange={setTeacherFilter}
-              >
-                <SelectTrigger id="teacher-filter">
-                  <SelectValue placeholder="All Teachers" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Teachers</SelectItem>
-                  {teachers.map((teacher) => (
-                    <SelectItem key={teacher.id} value={teacher.id.toString()}>
-                      {teacher.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          {totalPages > 1 && (
+            <div className="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
+              <div className="flex items-center justify-between">
+                <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm text-gray-700">
+                      Showing <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> to{" "}
+                      <span className="font-medium">
+                        {Math.min(currentPage * itemsPerPage, students.length)}
+                      </span>{" "}
+                      of <span className="font-medium">{students.length}</span> results
+                    </p>
+                  </div>
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious 
+                          onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                          className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
+                        />
+                      </PaginationItem>
+                      
+                      {Array.from({ length: Math.min(totalPages, 5) }).map((_, index) => {
+                        // Show first page, last page, current page, and pages around current page
+                        let pageNumber: number;
+                        
+                        if (totalPages <= 5) {
+                          // Show all pages if total pages is 5 or less
+                          pageNumber = index + 1;
+                        } else if (currentPage <= 3) {
+                          // Show first 5 pages
+                          pageNumber = index + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          // Show last 5 pages
+                          pageNumber = totalPages - 4 + index;
+                        } else {
+                          // Show current page and 2 pages before and after
+                          pageNumber = currentPage - 2 + index;
+                        }
+                        
+                        return (
+                          <PaginationItem key={pageNumber}>
+                            <PaginationLink
+                              isActive={currentPage === pageNumber}
+                              onClick={() => setCurrentPage(pageNumber)}
+                            >
+                              {pageNumber}
+                            </PaginationLink>
+                          </PaginationItem>
+                        );
+                      })}
+                      
+                      <PaginationItem>
+                        <PaginationNext 
+                          onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                          className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              </div>
             </div>
           )}
-          
-          <div>
-            <label htmlFor="search-filter" className="block text-sm font-medium text-gray-700 mb-1">Search</label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                id="search-filter"
-                placeholder="Student name"
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-gray-900">
-          Students
-          <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
-            {filteredStudents.length} of {students.length}
-          </span>
-        </h2>
-        
-        <Button
-          onClick={onAddStudent}
-          className="bg-purple-600 hover:bg-purple-700"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Student
-        </Button>
-      </div>
-      
-      {filteredStudents.length === 0 ? (
-        <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-          <p className="text-gray-500">No students match your filters.</p>
-        </div>
+        </>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredStudents.map((student) => (
-            <StudentCard
-              key={student.id}
-              student={student}
-              teacherName={isAdmin ? getTeacherName(student.teacherId) : undefined}
-              onEdit={onEditStudent}
-              onDelete={onDeleteStudent}
-              onViewProgress={onViewProgress}
-            />
-          ))}
-        </div>
+        <CardContent className="py-12 text-center">
+          <p className="text-gray-500">No students found. Add a student to get started.</p>
+        </CardContent>
       )}
-    </div>
+    </Card>
   );
 }

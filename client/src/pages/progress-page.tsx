@@ -1,186 +1,131 @@
-import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { useAuth } from "@/hooks/use-auth";
-import { Sidebar } from "@/components/layout/sidebar";
-import { TopBar } from "@/components/layout/top-bar";
-import { ProgressList } from "@/components/progress/progress-list";
-import { ProgressForm } from "@/components/progress/progress-form";
-import { studentApi, progressApi } from "@/lib/api";
-import { Progress, InsertProgress, Student } from "@shared/schema";
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useLocation } from 'wouter';
+import { Sidebar } from '@/components/layout/sidebar';
+import { Header } from '@/components/layout/header';
+import { ProgressList } from '@/components/progress/progress-list';
+import { ProgressForm } from '@/components/progress/progress-form';
+import { Button } from '@/components/ui/button';
+import { PlusIcon } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { useAuth } from '@/hooks/use-auth';
 import { 
   Dialog, 
-  DialogContent,
-  DialogTrigger
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useToast } from "@/hooks/use-toast";
-import { Loader2, Plus } from "lucide-react";
-import { queryClient } from "@/lib/queryClient";
-import { useLocation } from "wouter";
+  DialogContent, 
+  DialogDescription, 
+  DialogHeader, 
+  DialogTitle
+} from '@/components/ui/dialog';
+import { classOptions, Student, ProgressEntry } from '@shared/schema';
 
 export default function ProgressPage() {
   const { user } = useAuth();
-  const [location, setLocation] = useLocation();
-  const { toast } = useToast();
+  const [location] = useLocation();
   
-  // Extract student ID from URL if available
+  // Extract query params
   const params = new URLSearchParams(location.split('?')[1]);
-  const urlStudentId = params.get('studentId') ? parseInt(params.get('studentId')!) : null;
+  const initialAction = params.get('action');
+  const initialStudentId = params.get('studentId');
   
-  const [selectedStudentId, setSelectedStudentId] = useState<number | null>(urlStudentId);
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [selectedProgress, setSelectedProgress] = useState<Progress | null>(null);
-  
-  // Fetch students based on user role
-  const { data: students = [], isLoading: isLoadingStudents } = useQuery({
-    queryKey: ["/api/students"],
-    queryFn: async () => {
-      const filters = user?.role === "teacher" ? { teacherId: user.id } : {};
-      return await studentApi.getStudents(filters);
-    },
+  // State for filtering and actions
+  const [studentFilter, setStudentFilter] = useState<string>(initialStudentId || 'all');
+  const [classFilter, setClassFilter] = useState<string>('all');
+  const [dateFilter, setDateFilter] = useState<string>('');
+  const [showAddForm, setShowAddForm] = useState<boolean>(initialAction === 'add');
+  const [editingProgress, setEditingProgress] = useState<ProgressEntry | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<number | null>(
+    initialStudentId ? parseInt(initialStudentId) : null
+  );
+
+  // Fetch students for dropdown
+  const { data: students, isLoading: studentsLoading } = useQuery({
+    queryKey: ['/api/students'],
+    retry: false,
   });
-  
-  // Set first student as selected if not already set
-  useEffect(() => {
-    if (students.length > 0 && !selectedStudentId) {
-      setSelectedStudentId(students[0].id);
-    }
-  }, [students, selectedStudentId]);
-  
-  // Selected student
-  const selectedStudent = students.find(s => s.id === selectedStudentId);
-  
-  // Fetch progress for selected student
-  const { data: progress = [], isLoading: isLoadingProgress } = useQuery({
-    queryKey: ["/api/progress", selectedStudentId],
-    queryFn: () => progressApi.getStudentProgress(selectedStudentId!),
-    enabled: !!selectedStudentId,
+
+  // Filter students by class if class filter is active
+  const filteredStudents = students?.filter((student: Student) => {
+    return classFilter === 'all' || student.class === classFilter;
   });
-  
-  // Add progress mutation
-  const addProgressMutation = useMutation({
-    mutationFn: (data: InsertProgress) => progressApi.createProgress(data),
-    onSuccess: () => {
-      setIsAddDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/progress", selectedStudentId] });
-      toast({
-        title: "Progress Recorded",
-        description: "The progress has been recorded successfully.",
+
+  // Get selected student for form
+  const selectedStudent = selectedStudentId 
+    ? students?.find((s: Student) => s.id === selectedStudentId) 
+    : null;
+
+  // Fetch progress entries for the selected student
+  const { data: progressEntries, isLoading: progressLoading, refetch } = useQuery({
+    queryKey: ['/api/students', studentFilter === 'all' ? 'all' : parseInt(studentFilter), 'progress'],
+    queryFn: async ({ queryKey }) => {
+      const [, id, ] = queryKey;
+      if (id === 'all') {
+        // TODO: Implement endpoint to get all progress entries
+        // For now, return empty array
+        return [];
+      }
+      const res = await fetch(`/api/students/${id}/progress`, {
+        credentials: 'include',
       });
+      if (!res.ok) throw new Error('Failed to fetch progress entries');
+      return res.json();
     },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to Record Progress",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
+    enabled: studentFilter !== 'all',
   });
-  
-  // Update progress mutation
-  const updateProgressMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<Progress> }) => 
-      progressApi.updateProgress(id, data),
-    onSuccess: () => {
-      setIsEditDialogOpen(false);
-      setSelectedProgress(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/progress", selectedStudentId] });
-      toast({
-        title: "Progress Updated",
-        description: "The progress entry has been updated successfully.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to Update Progress",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
+
+  // Filter progress entries by date if date filter is active
+  const filteredProgressEntries = progressEntries?.filter((entry: ProgressEntry) => {
+    if (!dateFilter) return true;
+    
+    const entryDate = new Date(entry.date).toISOString().split('T')[0];
+    return entryDate === dateFilter;
   });
-  
-  // Delete progress mutation
-  const deleteProgressMutation = useMutation({
-    mutationFn: (id: number) => progressApi.deleteProgress(id),
-    onSuccess: () => {
-      setIsDeleteDialogOpen(false);
-      setSelectedProgress(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/progress", selectedStudentId] });
-      toast({
-        title: "Progress Deleted",
-        description: "The progress entry has been deleted successfully.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to Delete Progress",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-  
+
   // Handlers
-  const handleStudentChange = (studentId: string) => {
-    setSelectedStudentId(parseInt(studentId));
-    // Update URL without navigation
-    setLocation(`/progress?studentId=${studentId}`, { replace: true });
-  };
-  
   const handleAddProgress = () => {
-    setIsAddDialogOpen(true);
+    setEditingProgress(null);
+    setShowAddForm(true);
   };
-  
-  const handleEditProgress = (progress: Progress) => {
-    setSelectedProgress(progress);
-    setIsEditDialogOpen(true);
+
+  const handleEditProgress = (progress: ProgressEntry) => {
+    setEditingProgress(progress);
+    // Set the student filter to show entries for this student
+    setStudentFilter(String(progress.studentId));
+    // Find the student for the form
+    const student = students?.find((s: Student) => s.id === progress.studentId);
+    if (student) {
+      setSelectedStudentId(student.id);
+    }
+    setShowAddForm(true);
   };
-  
-  const handleDeleteProgress = (progress: Progress) => {
-    setSelectedProgress(progress);
-    setIsDeleteDialogOpen(true);
+
+  const handleCloseForm = () => {
+    setShowAddForm(false);
+    setEditingProgress(null);
+    refetch();
   };
-  
-  const handleSubmitAdd = (data: InsertProgress) => {
-    addProgressMutation.mutate(data);
-  };
-  
-  const handleSubmitEdit = (data: InsertProgress) => {
-    if (selectedProgress) {
-      updateProgressMutation.mutate({
-        id: selectedProgress.id,
-        data
-      });
+
+  const handleStudentSelect = (value: string) => {
+    setStudentFilter(value);
+    if (value !== 'all') {
+      setSelectedStudentId(parseInt(value));
+    } else {
+      setSelectedStudentId(null);
     }
   };
-  
-  const handleConfirmDelete = () => {
-    if (selectedProgress) {
-      deleteProgressMutation.mutate(selectedProgress.id);
-    }
-  };
-  
-  const isLoading = isLoadingStudents || isLoadingProgress;
-  
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <Sidebar />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar title="Progress Tracking" />
+        <Header title="Progress Tracking" />
         
         <main className="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
           <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
@@ -189,119 +134,101 @@ export default function ProgressPage() {
               <p className="mt-1 text-sm text-gray-500">Monitor and record student development</p>
             </div>
             
-            {selectedStudentId && (
-              <div className="mt-4 md:mt-0 flex-shrink-0">
-                <Button
-                  onClick={handleAddProgress}
-                  className="bg-purple-600 hover:bg-purple-700"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Record Progress
-                </Button>
-              </div>
-            )}
+            <div className="mt-4 md:mt-0 flex-shrink-0">
+              <Button 
+                onClick={handleAddProgress}
+                className="inline-flex items-center px-4 py-2 bg-purple-600 hover:bg-purple-700"
+              >
+                <PlusIcon className="mr-2 h-4 w-4" />
+                Record Progress
+              </Button>
+            </div>
           </div>
           
-          {isLoading ? (
-            <div className="flex justify-center items-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-purple-600" />
-              <span className="ml-2 text-lg text-gray-600">Loading...</span>
-            </div>
-          ) : (
-            <>
-              {/* Student selection */}
-              {students.length > 0 && (
-                <div className="bg-white p-4 shadow rounded-lg mb-6">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label htmlFor="student-select" className="block text-sm font-medium text-gray-700 mb-1">Student</label>
-                      <Select
-                        value={selectedStudentId?.toString()}
-                        onValueChange={handleStudentChange}
-                      >
-                        <SelectTrigger id="student-select">
-                          <SelectValue placeholder="Select a student" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {students.map((student) => (
-                            <SelectItem key={student.id} value={student.id.toString()}>
-                              {student.name} ({student.class})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {selectedStudentId && selectedStudent ? (
-                <ProgressList
-                  progress={progress}
-                  onEdit={handleEditProgress}
-                  onDelete={handleDeleteProgress}
-                />
-              ) : (
-                <div className="bg-white p-8 shadow rounded-lg text-center">
-                  <p className="text-gray-500">
-                    {students.length > 0 
-                      ? "Select a student to view their progress."
-                      : "No students found. Add students to track their progress."}
-                  </p>
-                </div>
-              )}
-            </>
-          )}
-          
-          {/* Add Progress Dialog */}
-          {selectedStudent && (
-            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-              <DialogContent className="sm:max-w-3xl">
-                <ProgressForm
-                  student={selectedStudent}
-                  onSubmit={handleSubmitAdd}
-                  onCancel={() => setIsAddDialogOpen(false)}
-                  isSubmitting={addProgressMutation.isPending}
-                />
-              </DialogContent>
-            </Dialog>
-          )}
-          
-          {/* Edit Progress Dialog */}
-          {selectedStudent && selectedProgress && (
-            <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-              <DialogContent className="sm:max-w-3xl">
-                <ProgressForm
-                  student={selectedStudent}
-                  defaultValues={selectedProgress}
-                  onSubmit={handleSubmitEdit}
-                  onCancel={() => setIsEditDialogOpen(false)}
-                  isSubmitting={updateProgressMutation.isPending}
-                />
-              </DialogContent>
-            </Dialog>
-          )}
-          
-          {/* Delete Confirmation Dialog */}
-          <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete Progress Entry</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Are you sure you want to delete this progress entry? This action cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleConfirmDelete}
-                  className="bg-red-500 hover:bg-red-600"
+          {/* Filter Controls */}
+          <div className="bg-white p-4 shadow rounded-lg mb-6">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div>
+                <label htmlFor="student-filter" className="block text-sm font-medium text-gray-700">Student</label>
+                <Select 
+                  value={studentFilter} 
+                  onValueChange={handleStudentSelect}
+                  disabled={studentsLoading}
                 >
-                  {deleteProgressMutation.isPending ? "Deleting..." : "Delete"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Students" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Students</SelectItem>
+                    {filteredStudents?.map((student: Student) => (
+                      <SelectItem key={student.id} value={String(student.id)}>
+                        {student.name} ({student.class})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <label htmlFor="class-filter-progress" className="block text-sm font-medium text-gray-700">Class</label>
+                <Select 
+                  value={classFilter} 
+                  onValueChange={setClassFilter}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Classes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Classes</SelectItem>
+                    {classOptions.map((cls) => (
+                      <SelectItem key={cls} value={cls}>{cls}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <label htmlFor="date-filter" className="block text-sm font-medium text-gray-700">Date</label>
+                <Input
+                  type="date"
+                  id="date-filter"
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          
+          {/* Progress Entries List */}
+          <ProgressList 
+            progressEntries={filteredProgressEntries || []} 
+            students={students || []}
+            isLoading={progressLoading || studentsLoading}
+            onEdit={handleEditProgress}
+            onRefresh={refetch}
+          />
+          
+          {/* Add/Edit Progress Dialog */}
+          <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
+            <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>
+                  {editingProgress ? 'Edit Progress Entry' : 'Record Student Progress'}
+                </DialogTitle>
+                <DialogDescription>
+                  {editingProgress 
+                    ? 'Update the progress information below.' 
+                    : 'Fill out the form below to record new progress.'}
+                </DialogDescription>
+              </DialogHeader>
+              <ProgressForm 
+                progress={editingProgress}
+                student={selectedStudent || undefined}
+                students={students || []}
+                onClose={handleCloseForm}
+              />
+            </DialogContent>
+          </Dialog>
         </main>
       </div>
     </div>

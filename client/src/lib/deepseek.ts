@@ -1,42 +1,56 @@
-import { apiRequest } from "@/lib/queryClient";
+// This file handles DeepSeek API integration
 
-interface AIResponse {
-  suggestions: string;
-}
+// The DeepSeek API key will come from the environment variables
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || import.meta.env.VITE_DEEPSEEK_API_KEY;
+const API_URL = '/api/ai-suggestions';
 
-// Function to get AI suggestions for teaching activities
-export async function getAISuggestions(prompt: string): Promise<string> {
+// Types for the DeepSeek API
+export type DeepSeekRequest = {
+  prompt: string;
+};
+
+export type DeepSeekResponse = {
+  id: number;
+  prompt: string;
+  response: string;
+  createdAt: string;
+};
+
+// Function to get suggestions from DeepSeek
+export const getSuggestions = async (prompt: string): Promise<DeepSeekResponse> => {
   try {
-    // Call our backend endpoint which handles the API communication
-    const response = await apiRequest("POST", "/api/ai-suggestions", { prompt });
-    const data: AIResponse = await response.json();
-    return data.suggestions;
+    // We'll use our backend as a proxy to the DeepSeek API
+    // This allows for caching and avoids exposing the API key
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ prompt }),
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to get suggestions: ${errorText}`);
+    }
+
+    return await response.json();
   } catch (error) {
-    console.error("Error getting AI suggestions:", error);
+    console.error('Error getting DeepSeek suggestions:', error);
     throw error;
   }
-}
+};
 
-// Helper function to generate prompts based on class and activity type
-export function generatePrompt(className: string, activityType: string): string {
-  const ageMap = {
-    'Nursery': '3 years old',
-    'LKG': '4 years old',
-    'UKG': '5 years old'
-  };
+// Helper function to create prompts for different plan types and classes
+export const createSuggestionPrompt = (planType: string, classType: string, focus?: string): string => {
+  const timeframe = planType === 'Annual' ? 'year-long' : 
+                    planType === 'Monthly' ? 'month-long' : 'week-long';
   
-  const age = ageMap[className as keyof typeof ageMap] || '';
+  const ageGroup = classType === 'Nursery' ? '3-year-old' : 
+                   classType === 'LKG' ? '4-year-old' : '5-year-old';
   
-  return `Suggest 5 ${activityType} activities for ${className} students (${age}) according to Nepal's ECED framework. Include detailed steps and learning objectives for each activity.`;
-}
-
-// Function to format AI suggestions for display
-export function formatSuggestions(suggestions: string): string {
-  if (!suggestions) return '';
+  const focusArea = focus ? ` focusing on ${focus}` : '';
   
-  // Try to clean up and format the suggestions
-  return suggestions
-    .replace(/^\s*\d+\.\s*/gm, '\n• ') // Replace numbered lists with bullet points
-    .replace(/^(.*:)/gm, '**$1**')     // Bold any headings/titles
-    .trim();
-}
+  return `Suggest 5 activities for a ${timeframe} teaching plan for ${ageGroup} children in ${classType} class${focusArea}, following Nepal's ECED framework.`;
+};

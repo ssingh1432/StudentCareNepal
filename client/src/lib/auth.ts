@@ -1,109 +1,75 @@
-import { apiRequest } from "./queryClient";
+import { User } from '@shared/schema';
+import { apiRequest } from './queryClient';
 
-// Define types
-export interface User {
-  id: number;
+// Interface for login credentials
+export interface LoginCredentials {
   email: string;
+  password: string;
+}
+
+// Interface for registration data
+export interface RegistrationData {
+  email: string;
+  password: string;
   name: string;
-  role: "admin" | "teacher";
+  role?: string;
+  assignedClasses?: string[];
 }
 
-export interface LoginResponse {
-  token: string;
-  user: User;
-}
-
-// Login function
-export const login = async (email: string, password: string): Promise<LoginResponse> => {
-  const response = await apiRequest("POST", "/api/auth/login", { email, password });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.message || "Login failed");
-  }
-  
-  const data = await response.json();
-  
-  // Store token in localStorage
-  localStorage.setItem("token", data.token);
-  
-  return data;
+// Function to perform login
+export const login = async (credentials: LoginCredentials): Promise<User> => {
+  const response = await apiRequest('POST', '/api/login', credentials);
+  const userData = await response.json();
+  return userData;
 };
 
-// Logout function
-export const logout = (): void => {
-  localStorage.removeItem("token");
+// Function to perform logout
+export const logout = async (): Promise<void> => {
+  await apiRequest('POST', '/api/logout');
 };
 
-// Get current user
+// Function to register a new user
+export const register = async (data: RegistrationData): Promise<User> => {
+  const response = await apiRequest('POST', '/api/register', data);
+  const userData = await response.json();
+  return userData;
+};
+
+// Function to get the current user (for initial auth check)
 export const getCurrentUser = async (): Promise<User | null> => {
-  const token = localStorage.getItem("token");
-  
-  if (!token) {
-    return null;
-  }
-  
   try {
-    const response = await fetch("/api/auth/me", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+    const response = await fetch('/api/user', {
+      method: 'GET',
+      credentials: 'include',
     });
     
     if (!response.ok) {
-      throw new Error("Failed to get user");
+      if (response.status === 401) {
+        // User is not authenticated
+        return null;
+      }
+      throw new Error('Failed to fetch current user');
     }
     
-    const data = await response.json();
-    return data.user;
+    return await response.json();
   } catch (error) {
-    console.error("Error getting current user:", error);
-    localStorage.removeItem("token");
+    console.error('Error fetching current user:', error);
     return null;
   }
 };
 
-// Get token from storage
-export const getToken = (): string | null => {
-  return localStorage.getItem("token");
+// Helper function to check if user is an admin
+export const isAdmin = (user: User | null): boolean => {
+  return user?.role === 'admin';
 };
 
-// Parse JWT token
-export const parseJwt = (token: string): any => {
-  try {
-    return JSON.parse(atob(token.split(".")[1]));
-  } catch (e) {
-    return null;
-  }
-};
-
-// Check if token is expired
-export const isTokenExpired = (token: string): boolean => {
-  const parsedToken = parseJwt(token);
-  if (!parsedToken) return true;
+// Helper function to check if a user has access to a specific class
+export const hasClassAccess = (user: User | null, className: string): boolean => {
+  if (!user) return false;
   
-  const expiryTime = parsedToken.exp * 1000; // Convert to milliseconds
-  return Date.now() >= expiryTime;
-};
-
-// Check if user is authenticated
-export const isAuthenticated = (): boolean => {
-  const token = getToken();
-  if (!token) return false;
-  return !isTokenExpired(token);
-};
-
-// Check if user is admin
-export const isAdmin = async (): Promise<boolean> => {
-  const user = await getCurrentUser();
-  return user?.role === "admin";
-};
-
-export default {
-  login,
-  logout,
-  getCurrentUser,
-  getToken,
-  isAuthenticated,
-  isAdmin,
+  // Admins have access to all classes
+  if (user.role === 'admin') return true;
+  
+  // Check if the teacher is assigned to this class
+  return Array.isArray(user.assignedClasses) && user.assignedClasses.includes(className);
 };

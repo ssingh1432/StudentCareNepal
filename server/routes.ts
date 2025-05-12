@@ -1,569 +1,579 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
 import { setupAuth } from "./auth";
-import { insertStudentSchema, insertProgressSchema, insertTeachingPlanSchema, insertUserSchema } from "@shared/schema";
-import { z } from "zod";
-import axios from "axios";
-import multer from "multer";
-import { v2 as cloudinary } from "cloudinary";
+import { storage } from "./storage";
+import { 
+  insertStudentSchema, 
+  insertProgressEntrySchema, 
+  insertTeachingPlanSchema, 
+  insertAiSuggestionSchema 
+} from "@shared/schema";
+import { ZodError } from "zod";
 
-// Initialize Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
-  api_key: process.env.CLOUDINARY_API_KEY || "",
-  api_secret: process.env.CLOUDINARY_API_SECRET || "",
-});
-
-// Setup file upload middleware
-const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 1024 * 1024, // 1MB limit
-  }
-});
-
-// Role-based authorization middleware
-const authorize = (roles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.isAuthenticated()) {
-      return res.status(401).json({ message: "Not authenticated" });
-    }
-    
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ message: "Unauthorized access" });
-    }
-    
-    next();
-  };
-};
-
-// Teacher can only access their assigned students middleware
-const canAccessStudent = async (req: Request, res: Response, next: NextFunction) => {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-  
-  if (req.user.role === 'admin') {
-    return next();
-  }
-  
-  const studentId = parseInt(req.params.id);
-  if (isNaN(studentId)) {
-    return res.status(400).json({ message: "Invalid student ID" });
-  }
-  
-  const student = await storage.getStudent(studentId);
-  if (!student) {
-    return res.status(404).json({ message: "Student not found" });
-  }
-  
-  if (student.teacherId !== req.user.id) {
-    return res.status(403).json({ message: "Unauthorized access to this student" });
-  }
-  
-  next();
+// Helper function to validate user has access to specified class
+const validateClassAccess = (req: Request, classValue: string) => {
+  if (!req.isAuthenticated()) return false;
+  if (req.user.role === 'admin') return true;
+  return req.user.assignedClasses.includes(classValue);
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Setup authentication routes
+  // sets up /api/register, /api/login, /api/logout, /api/user
   setupAuth(app);
-  
-  const httpServer = createServer(app);
-  
-  // Teacher routes
-  app.get("/api/teachers", authorize(['admin']), async (req, res) => {
-    try {
-      const teachers = await storage.getTeachers();
-      res.json(teachers.map(({ password, ...teacher }) => teacher));
-    } catch (error) {
-      res.status(500).json({ message: "Failed to retrieve teachers" });
+
+  // Error handling middleware for ZodError
+  const handleZodError = (err: unknown, res: Response) => {
+    if (err instanceof ZodError) {
+      return res.status(400).json({ 
+        message: "Validation error", 
+        errors: err.errors 
+      });
     }
-  });
+    console.error(err);
+    return res.status(500).json({ message: "Internal server error" });
+  };
+
+  // -------------------- Student Routes --------------------
   
-  app.post("/api/teachers", authorize(['admin']), async (req, res) => {
+  // Get all students (filtered by teacher assignment)
+  app.get("/api/students", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
+    const classFilter = req.query.class as string;
+    const teacherFilter = req.query.teacherId as string;
+    
     try {
-      const validatedData = insertUserSchema.parse(req.body);
-      const teacher = await storage.createUser(validatedData);
-      const { password, ...teacherWithoutPassword } = teacher;
-      res.status(201).json(teacherWithoutPassword);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      let students;
+      if (req.user.role === 'admin') {
+        students = storage.getAllStudents({ 
+          classFilter: classFilter || undefined,
+          teacherFilter: teacherFilter ? parseInt(teacherFilter) : undefined
+        });
+      } else {
+        students = storage.getStudentsByTeacherId(req.user.id, classFilter || undefined);
       }
-      res.status(500).json({ message: "Failed to create teacher" });
-    }
-  });
-  
-  app.put("/api/teachers/:id", authorize(['admin']), async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid teacher ID" });
-      }
-      
-      const teacher = await storage.getUser(id);
-      if (!teacher || teacher.role !== 'teacher') {
-        return res.status(404).json({ message: "Teacher not found" });
-      }
-      
-      const updatedTeacher = await storage.updateUser(id, req.body);
-      if (!updatedTeacher) {
-        return res.status(404).json({ message: "Teacher not found" });
-      }
-      
-      const { password, ...teacherWithoutPassword } = updatedTeacher;
-      res.json(teacherWithoutPassword);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to update teacher" });
-    }
-  });
-  
-  app.delete("/api/teachers/:id", authorize(['admin']), async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid teacher ID" });
-      }
-      
-      const teacher = await storage.getUser(id);
-      if (!teacher || teacher.role !== 'teacher') {
-        return res.status(404).json({ message: "Teacher not found" });
-      }
-      
-      const result = await storage.deleteUser(id);
-      if (!result) {
-        return res.status(404).json({ message: "Teacher not found" });
-      }
-      
-      res.status(204).end();
-    } catch (error) {
-      res.status(500).json({ message: "Failed to delete teacher" });
-    }
-  });
-  
-  // Student routes
-  app.get("/api/students", async (req, res) => {
-    try {
-      const filters: any = {};
-      
-      if (req.query.class) {
-        filters.class = req.query.class as string;
-      }
-      
-      if (req.query.learningAbility) {
-        filters.learningAbility = req.query.learningAbility as string;
-      }
-      
-      // If teacher, only return their students
-      if (req.isAuthenticated() && req.user.role === 'teacher') {
-        filters.teacherId = req.user.id;
-      } else if (req.query.teacherId) {
-        filters.teacherId = parseInt(req.query.teacherId as string);
-      }
-      
-      const students = await storage.getStudents(filters);
       res.json(students);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to retrieve students" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch students" });
     }
   });
-  
-  app.post("/api/students", authorize(['admin', 'teacher']), upload.single('photo'), async (req, res) => {
-    try {
-      let photoUrl = req.body.photoUrl || '';
-      
-      // Upload photo to Cloudinary if provided
-      if (req.file) {
-        try {
-          const base64Image = req.file.buffer.toString('base64');
-          const result = await cloudinary.uploader.upload(
-            `data:${req.file.mimetype};base64,${base64Image}`,
-            { folder: 'students' }
-          );
-          photoUrl = result.secure_url;
-        } catch (error) {
-          console.error('Cloudinary upload error:', error);
-          return res.status(500).json({ message: "Failed to upload photo" });
-        }
-      }
-      
-      // Assign teacher ID based on user role
-      let teacherId = parseInt(req.body.teacherId);
-      if (isNaN(teacherId) && req.user.role === 'teacher') {
-        teacherId = req.user.id;
-      }
-      
-      const data = { ...req.body, photoUrl, teacherId };
-      const validatedData = insertStudentSchema.parse(data);
-      const student = await storage.createStudent(validatedData);
-      res.status(201).json(student);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to create student" });
-    }
-  });
-  
-  app.get("/api/students/:id", canAccessStudent, async (req, res) => {
+
+  // Get student by ID
+  app.get("/api/students/:id", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid student ID" });
-      }
+      const student = storage.getStudent(id);
       
-      const student = await storage.getStudent(id);
       if (!student) {
         return res.status(404).json({ message: "Student not found" });
       }
       
+      // Check if user has access to this student
+      if (req.user.role !== 'admin' && student.teacherId !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to view this student" });
+      }
+      
       res.json(student);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to retrieve student" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch student" });
     }
   });
-  
-  app.put("/api/students/:id", canAccessStudent, upload.single('photo'), async (req, res) => {
+
+  // Create student
+  app.post("/api/students", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
+    try {
+      const studentData = insertStudentSchema.parse(req.body);
+      
+      // Validate class access
+      if (!validateClassAccess(req, studentData.class)) {
+        return res.status(403).json({ message: "You don't have permission to add students to this class" });
+      }
+      
+      // If teacher is creating student, override teacherId with their own ID
+      if (req.user.role === 'teacher') {
+        studentData.teacherId = req.user.id;
+      }
+      
+      const newStudent = storage.createStudent(studentData);
+      res.status(201).json(newStudent);
+    } catch (err) {
+      handleZodError(err, res);
+    }
+  });
+
+  // Update student
+  app.put("/api/students/:id", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid student ID" });
-      }
+      const student = storage.getStudent(id);
       
-      // Upload new photo if provided
-      if (req.file) {
-        try {
-          const base64Image = req.file.buffer.toString('base64');
-          const result = await cloudinary.uploader.upload(
-            `data:${req.file.mimetype};base64,${base64Image}`,
-            { folder: 'students' }
-          );
-          req.body.photoUrl = result.secure_url;
-        } catch (error) {
-          console.error('Cloudinary upload error:', error);
-          return res.status(500).json({ message: "Failed to upload photo" });
-        }
-      }
-      
-      const updatedStudent = await storage.updateStudent(id, req.body);
-      if (!updatedStudent) {
+      if (!student) {
         return res.status(404).json({ message: "Student not found" });
       }
       
+      // Check if user has permission to update this student
+      if (req.user.role !== 'admin' && student.teacherId !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to update this student" });
+      }
+      
+      const studentData = insertStudentSchema.parse(req.body);
+      
+      // Validate class access for the new class
+      if (!validateClassAccess(req, studentData.class)) {
+        return res.status(403).json({ message: "You don't have permission to move students to this class" });
+      }
+      
+      // If teacher is updating, ensure they can't change teacher assignment
+      if (req.user.role === 'teacher') {
+        studentData.teacherId = req.user.id;
+      }
+      
+      const updatedStudent = storage.updateStudent(id, studentData);
       res.json(updatedStudent);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to update student" });
+    } catch (err) {
+      handleZodError(err, res);
     }
   });
-  
-  app.delete("/api/students/:id", canAccessStudent, async (req, res) => {
+
+  // Delete student
+  app.delete("/api/students/:id", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid student ID" });
-      }
+      const student = storage.getStudent(id);
       
-      const result = await storage.deleteStudent(id);
-      if (!result) {
+      if (!student) {
         return res.status(404).json({ message: "Student not found" });
       }
       
-      res.status(204).end();
-    } catch (error) {
+      // Check if user has permission to delete this student
+      if (req.user.role !== 'admin' && student.teacherId !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to delete this student" });
+      }
+      
+      storage.deleteStudent(id);
+      res.status(200).json({ message: "Student deleted successfully" });
+    } catch (err) {
+      console.error(err);
       res.status(500).json({ message: "Failed to delete student" });
     }
   });
+
+  // -------------------- Progress Routes --------------------
   
-  // Student assignment route (admin only)
-  app.post("/api/students/:id/assign", authorize(['admin']), async (req, res) => {
+  // Get progress entries for a student
+  app.get("/api/students/:id/progress", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const studentId = parseInt(req.params.id);
-      const teacherId = parseInt(req.body.teacherId);
+      const student = storage.getStudent(studentId);
       
-      if (isNaN(studentId) || isNaN(teacherId)) {
-        return res.status(400).json({ message: "Invalid student or teacher ID" });
+      if (!student) {
+        return res.status(404).json({ message: "Student not found" });
       }
       
-      const result = await storage.assignStudentToTeacher(studentId, teacherId);
-      if (!result) {
-        return res.status(404).json({ message: "Student or teacher not found" });
+      // Check if user has access to this student
+      if (req.user.role !== 'admin' && student.teacherId !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to view this student's progress" });
       }
       
-      res.status(200).json({ message: "Student assigned successfully" });
-    } catch (error) {
-      res.status(500).json({ message: "Failed to assign student" });
-    }
-  });
-  
-  // Progress routes
-  app.get("/api/progress/:studentId", canAccessStudent, async (req, res) => {
-    try {
-      const studentId = parseInt(req.params.studentId);
-      if (isNaN(studentId)) {
-        return res.status(400).json({ message: "Invalid student ID" });
-      }
-      
-      const progress = await storage.getProgressByStudent(studentId);
+      const progress = storage.getProgressEntriesByStudentId(studentId);
       res.json(progress);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to retrieve progress" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch progress entries" });
     }
   });
-  
-  app.post("/api/progress", authorize(['admin', 'teacher']), async (req, res) => {
+
+  // Create progress entry
+  app.post("/api/progress", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
-      const validatedData = insertProgressSchema.parse(req.body);
+      const progressData = insertProgressEntrySchema.parse({
+        ...req.body,
+        createdBy: req.user.id // Set the creator ID automatically
+      });
       
-      // Verify teacher has access to this student
-      if (req.user.role === 'teacher') {
-        const student = await storage.getStudent(validatedData.studentId);
-        if (!student || student.teacherId !== req.user.id) {
-          return res.status(403).json({ message: "Unauthorized access to this student" });
-        }
+      // Check if student exists and user has access
+      const student = storage.getStudent(progressData.studentId);
+      if (!student) {
+        return res.status(404).json({ message: "Student not found" });
       }
       
-      const progress = await storage.createProgress(validatedData);
-      res.status(201).json(progress);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      if (req.user.role !== 'admin' && student.teacherId !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to add progress for this student" });
       }
-      res.status(500).json({ message: "Failed to create progress entry" });
+      
+      const newProgress = storage.createProgressEntry(progressData);
+      res.status(201).json(newProgress);
+    } catch (err) {
+      handleZodError(err, res);
     }
   });
-  
-  app.put("/api/progress/:id", authorize(['admin', 'teacher']), async (req, res) => {
+
+  // Update progress entry
+  app.put("/api/progress/:id", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid progress ID" });
-      }
+      const progressEntry = storage.getProgressEntry(id);
       
-      const progress = await storage.getProgress(id);
-      if (!progress) {
+      if (!progressEntry) {
         return res.status(404).json({ message: "Progress entry not found" });
       }
       
-      // Verify teacher has access to this student
-      if (req.user.role === 'teacher') {
-        const student = await storage.getStudent(progress.studentId);
-        if (!student || student.teacherId !== req.user.id) {
-          return res.status(403).json({ message: "Unauthorized access to this student's progress" });
-        }
+      // Check if user has permission to update this progress entry
+      if (req.user.role !== 'admin' && progressEntry.createdBy !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to update this progress entry" });
       }
       
-      const updatedProgress = await storage.updateProgress(id, req.body);
-      if (!updatedProgress) {
-        return res.status(404).json({ message: "Progress entry not found" });
+      const progressData = insertProgressEntrySchema.parse({
+        ...req.body,
+        createdBy: progressEntry.createdBy // Preserve original creator
+      });
+      
+      // Validate that the student exists and user has access
+      const student = storage.getStudent(progressData.studentId);
+      if (!student) {
+        return res.status(404).json({ message: "Student not found" });
       }
       
+      if (req.user.role !== 'admin' && student.teacherId !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to update progress for this student" });
+      }
+      
+      const updatedProgress = storage.updateProgressEntry(id, progressData);
       res.json(updatedProgress);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to update progress entry" });
+    } catch (err) {
+      handleZodError(err, res);
     }
   });
-  
-  app.delete("/api/progress/:id", authorize(['admin', 'teacher']), async (req, res) => {
+
+  // Delete progress entry
+  app.delete("/api/progress/:id", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid progress ID" });
-      }
+      const progressEntry = storage.getProgressEntry(id);
       
-      const progress = await storage.getProgress(id);
-      if (!progress) {
+      if (!progressEntry) {
         return res.status(404).json({ message: "Progress entry not found" });
       }
       
-      // Verify teacher has access to this student
-      if (req.user.role === 'teacher') {
-        const student = await storage.getStudent(progress.studentId);
-        if (!student || student.teacherId !== req.user.id) {
-          return res.status(403).json({ message: "Unauthorized access to this student's progress" });
-        }
+      // Check if user has permission to delete this progress entry
+      if (req.user.role !== 'admin' && progressEntry.createdBy !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to delete this progress entry" });
       }
       
-      const result = await storage.deleteProgress(id);
-      if (!result) {
-        return res.status(404).json({ message: "Progress entry not found" });
-      }
-      
-      res.status(204).end();
-    } catch (error) {
+      storage.deleteProgressEntry(id);
+      res.status(200).json({ message: "Progress entry deleted successfully" });
+    } catch (err) {
+      console.error(err);
       res.status(500).json({ message: "Failed to delete progress entry" });
     }
   });
+
+  // -------------------- Teaching Plan Routes --------------------
   
-  // Teaching Plan routes
-  app.get("/api/teaching-plans", async (req, res) => {
+  // Get all teaching plans (filtered by class, type, and teacher)
+  app.get("/api/plans", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
+    const classFilter = req.query.class as string;
+    const typeFilter = req.query.type as string;
+    const teacherFilter = req.query.teacherId as string;
+    
     try {
-      const filters: any = {};
-      
-      if (req.query.type) {
-        filters.type = req.query.type as string;
+      let plans;
+      if (req.user.role === 'admin') {
+        plans = storage.getAllTeachingPlans({
+          classFilter: classFilter || undefined,
+          typeFilter: typeFilter || undefined,
+          createdByFilter: teacherFilter ? parseInt(teacherFilter) : undefined
+        });
+      } else {
+        // For teachers, only show plans they created or plans for their assigned classes
+        plans = storage.getTeachingPlansByTeacherId(req.user.id, {
+          classFilter: classFilter || undefined,
+          typeFilter: typeFilter || undefined
+        });
       }
-      
-      if (req.query.class) {
-        filters.class = req.query.class as string;
-      }
-      
-      // If teacher, only return their plans
-      if (req.isAuthenticated() && req.user.role === 'teacher') {
-        filters.teacherId = req.user.id;
-      } else if (req.query.teacherId) {
-        filters.teacherId = parseInt(req.query.teacherId as string);
-      }
-      
-      const plans = await storage.getTeachingPlans(filters);
       res.json(plans);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to retrieve teaching plans" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch teaching plans" });
     }
   });
-  
-  app.post("/api/teaching-plans", authorize(['admin', 'teacher']), async (req, res) => {
-    try {
-      // Set teacher ID based on user role
-      let data = { ...req.body };
-      if (req.user.role === 'teacher') {
-        data.teacherId = req.user.id;
-      }
-      
-      const validatedData = insertTeachingPlanSchema.parse(data);
-      const plan = await storage.createTeachingPlan(validatedData);
-      res.status(201).json(plan);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to create teaching plan" });
-    }
-  });
-  
-  app.get("/api/teaching-plans/:id", authorize(['admin', 'teacher']), async (req, res) => {
+
+  // Get teaching plan by ID
+  app.get("/api/plans/:id", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid plan ID" });
-      }
+      const plan = storage.getTeachingPlan(id);
       
-      const plan = await storage.getTeachingPlan(id);
       if (!plan) {
         return res.status(404).json({ message: "Teaching plan not found" });
       }
       
-      // Verify teacher has access to this plan
-      if (req.user.role === 'teacher' && plan.teacherId !== req.user.id) {
-        return res.status(403).json({ message: "Unauthorized access to this teaching plan" });
+      // Check if user has access to this plan
+      if (req.user.role !== 'admin' && plan.createdBy !== req.user.id && 
+          !req.user.assignedClasses.includes(plan.class)) {
+        return res.status(403).json({ message: "You don't have permission to view this teaching plan" });
       }
       
       res.json(plan);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to retrieve teaching plan" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch teaching plan" });
     }
   });
-  
-  app.put("/api/teaching-plans/:id", authorize(['admin', 'teacher']), async (req, res) => {
+
+  // Create teaching plan
+  app.post("/api/plans", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid plan ID" });
+      const planData = insertTeachingPlanSchema.parse({
+        ...req.body,
+        createdBy: req.user.id
+      });
+      
+      // Validate class access
+      if (!validateClassAccess(req, planData.class)) {
+        return res.status(403).json({ message: "You don't have permission to create plans for this class" });
       }
       
-      const plan = await storage.getTeachingPlan(id);
+      const newPlan = storage.createTeachingPlan(planData);
+      res.status(201).json(newPlan);
+    } catch (err) {
+      handleZodError(err, res);
+    }
+  });
+
+  // Update teaching plan
+  app.put("/api/plans/:id", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
+    try {
+      const id = parseInt(req.params.id);
+      const plan = storage.getTeachingPlan(id);
+      
       if (!plan) {
         return res.status(404).json({ message: "Teaching plan not found" });
       }
       
-      // Verify teacher has access to this plan
-      if (req.user.role === 'teacher' && plan.teacherId !== req.user.id) {
-        return res.status(403).json({ message: "Unauthorized access to this teaching plan" });
+      // Check if user has permission to update this plan
+      if (req.user.role !== 'admin' && plan.createdBy !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to update this teaching plan" });
       }
       
-      const updatedPlan = await storage.updateTeachingPlan(id, req.body);
-      if (!updatedPlan) {
-        return res.status(404).json({ message: "Teaching plan not found" });
+      const planData = insertTeachingPlanSchema.parse({
+        ...req.body,
+        createdBy: plan.createdBy // Preserve original creator
+      });
+      
+      // Validate class access for the new class
+      if (!validateClassAccess(req, planData.class)) {
+        return res.status(403).json({ message: "You don't have permission to create plans for this class" });
       }
       
+      const updatedPlan = storage.updateTeachingPlan(id, planData);
       res.json(updatedPlan);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to update teaching plan" });
+    } catch (err) {
+      handleZodError(err, res);
     }
   });
-  
-  app.delete("/api/teaching-plans/:id", authorize(['admin', 'teacher']), async (req, res) => {
+
+  // Delete teaching plan
+  app.delete("/api/plans/:id", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "Invalid plan ID" });
-      }
+      const plan = storage.getTeachingPlan(id);
       
-      const plan = await storage.getTeachingPlan(id);
       if (!plan) {
         return res.status(404).json({ message: "Teaching plan not found" });
       }
       
-      // Verify teacher has access to this plan
-      if (req.user.role === 'teacher' && plan.teacherId !== req.user.id) {
-        return res.status(403).json({ message: "Unauthorized access to this teaching plan" });
+      // Check if user has permission to delete this plan
+      if (req.user.role !== 'admin' && plan.createdBy !== req.user.id) {
+        return res.status(403).json({ message: "You don't have permission to delete this teaching plan" });
       }
       
-      const result = await storage.deleteTeachingPlan(id);
-      if (!result) {
-        return res.status(404).json({ message: "Teaching plan not found" });
-      }
-      
-      res.status(204).end();
-    } catch (error) {
+      storage.deleteTeachingPlan(id);
+      res.status(200).json({ message: "Teaching plan deleted successfully" });
+    } catch (err) {
+      console.error(err);
       res.status(500).json({ message: "Failed to delete teaching plan" });
     }
   });
+
+  // -------------------- Teacher Routes (Admin Only) --------------------
   
-  // DeepSeek API Integration for AI suggestions
-  app.post("/api/ai-suggestions", authorize(['admin', 'teacher']), async (req, res) => {
+  // Get all teachers
+  app.get("/api/teachers", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: "Only admins can access teacher list" });
+    }
+    
+    try {
+      const teachers = storage.getAllTeachers();
+      res.json(teachers);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch teachers" });
+    }
+  });
+
+  // -------------------- AI Suggestions --------------------
+
+  // Get or create AI suggestion
+  app.post("/api/ai-suggestions", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
     try {
       const { prompt } = req.body;
-      
       if (!prompt) {
         return res.status(400).json({ message: "Prompt is required" });
       }
       
-      const apiKey = process.env.DEEPSEEK_API_KEY;
-      
-      if (!apiKey) {
-        return res.status(500).json({ message: "DeepSeek API key not configured" });
+      // Check for cached response first
+      const cachedSuggestion = storage.getAiSuggestionByPrompt(prompt);
+      if (cachedSuggestion) {
+        return res.json(cachedSuggestion);
       }
       
-      try {
-        const response = await axios.post(
-          'https://api.deepseek.com/v1/chat/completions',
-          {
-            model: 'deepseek-v3',
-            messages: [
-              { role: 'system', content: 'You are an expert pre-primary education specialist. Provide teaching plan activities and suggestions that are age-appropriate, engaging, and aligned with educational goals for young children.' },
-              { role: 'user', content: prompt }
-            ],
-            max_tokens: 1000
-          },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
-            }
-          }
-        );
-        
-        const suggestion = response.data.choices[0].message.content;
-        res.json({ suggestion });
-      } catch (error: any) {
-        console.error('DeepSeek API error:', error.response?.data || error.message);
-        res.status(500).json({ message: "Failed to get AI suggestions" });
-      }
-    } catch (error) {
-      res.status(500).json({ message: "Failed to process request" });
+      // In a real implementation, we would call the DeepSeek API here
+      // For now, return a placeholder response to be replaced with actual API call
+      const mockResponse = "Here are some suggested activities:\n1. Color recognition game with flashcards\n2. Storytelling with puppets\n3. Counting exercises with natural objects";
+      
+      const suggestionData = insertAiSuggestionSchema.parse({
+        prompt,
+        response: mockResponse
+      });
+      
+      const newSuggestion = storage.createAiSuggestion(suggestionData);
+      res.json(newSuggestion);
+    } catch (err) {
+      handleZodError(err, res);
     }
   });
 
+  // -------------------- Student Assignment (Admin Only) --------------------
+  
+  // Assign student to teacher (admin only)
+  app.put("/api/students/:id/assign", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: "Only admins can assign students to teachers" });
+    }
+    
+    try {
+      const studentId = parseInt(req.params.id);
+      const { teacherId } = req.body;
+      
+      if (!teacherId) {
+        return res.status(400).json({ message: "Teacher ID is required" });
+      }
+      
+      const student = storage.getStudent(studentId);
+      if (!student) {
+        return res.status(404).json({ message: "Student not found" });
+      }
+      
+      const teacher = storage.getUser(parseInt(teacherId));
+      if (!teacher || teacher.role !== 'teacher') {
+        return res.status(404).json({ message: "Teacher not found" });
+      }
+      
+      // Verify the teacher is assigned to the student's class
+      if (!teacher.assignedClasses.includes(student.class)) {
+        return res.status(400).json({ message: "Teacher is not assigned to the student's class" });
+      }
+      
+      const updatedStudent = storage.updateStudent(studentId, {
+        ...student,
+        teacherId: parseInt(teacherId)
+      });
+      
+      res.json(updatedStudent);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to assign student to teacher" });
+    }
+  });
+
+  // -------------------- Statistics (for Dashboard) --------------------
+  
+  app.get("/api/statistics", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
+    try {
+      const statistics = {
+        totalStudents: 0,
+        studentsByClass: {
+          Nursery: 0,
+          LKG: 0,
+          UKG: 0
+        },
+        totalTeachers: 0,
+        totalPlans: 0,
+        totalProgressEntries: 0,
+        recentActivities: []
+      };
+      
+      if (req.user.role === 'admin') {
+        // Admin sees all statistics
+        const students = storage.getAllStudents({});
+        statistics.totalStudents = students.length;
+        
+        students.forEach(student => {
+          statistics.studentsByClass[student.class as keyof typeof statistics.studentsByClass]++;
+        });
+        
+        statistics.totalTeachers = storage.getAllTeachers().length;
+        statistics.totalPlans = storage.getAllTeachingPlans({}).length;
+        statistics.totalProgressEntries = storage.getAllProgressEntries().length;
+      } else {
+        // Teachers see only their statistics
+        const students = storage.getStudentsByTeacherId(req.user.id);
+        statistics.totalStudents = students.length;
+        
+        students.forEach(student => {
+          statistics.studentsByClass[student.class as keyof typeof statistics.studentsByClass]++;
+        });
+        
+        statistics.totalTeachers = 1; // Just themselves
+        statistics.totalPlans = storage.getTeachingPlansByTeacherId(req.user.id, {}).length;
+        statistics.totalProgressEntries = storage.getProgressEntriesByTeacherId(req.user.id).length;
+      }
+      
+      res.json(statistics);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch statistics" });
+    }
+  });
+
+  const httpServer = createServer(app);
   return httpServer;
 }

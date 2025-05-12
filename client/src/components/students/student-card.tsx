@@ -1,97 +1,124 @@
-import { Student } from "@shared/schema";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { Link } from "wouter";
+import { 
+  Card, 
+  CardContent, 
+  CardFooter, 
+  CardHeader 
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger 
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { Edit, Trash2, FileText, PenLine } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { 
+  ChartBar, 
+  Edit, 
+  MoreVertical, 
+  Trash,
+  Users
+} from "lucide-react";
+import { Student } from "@shared/schema";
 
 interface StudentCardProps {
   student: Student;
-  onEdit: (student: Student) => void;
-  onDelete: (student: Student) => void;
-  onViewProgress: (student: Student) => void;
-  onAddProgress: (student: Student) => void;
+  teacherName?: string;
+  onEdit: () => void;
+  onDelete: () => void;
 }
 
-export default function StudentCard({ 
-  student, 
-  onEdit, 
-  onDelete, 
-  onViewProgress, 
-  onAddProgress 
-}: StudentCardProps) {
-  // Get teacher name if available
-  const { data: teachers = [] } = useQuery({
-    queryKey: ["/api/teachers"],
-  });
-  
-  const teacherName = teachers.find((t: any) => t.id === student.teacherId)?.name || "Unassigned";
-  
-  // Determine background color based on class
-  const getBgColor = () => {
-    switch (student.class) {
-      case "Nursery":
-        return "bg-yellow-50";
-      case "LKG":
-        return "bg-blue-50";
-      case "UKG":
-        return "bg-green-50";
+export function StudentCard({ student, teacherName, onEdit, onDelete }: StudentCardProps) {
+  // Get badge color based on learning ability
+  const getLearningAbilityColor = (ability: string) => {
+    switch (ability) {
+      case "Talented":
+        return "bg-green-100 text-green-800";
+      case "Average":
+        return "bg-yellow-100 text-yellow-800";
+      case "Slow Learner":
+        return "bg-red-100 text-red-800";
       default:
-        return "bg-gray-50";
+        return "bg-gray-100 text-gray-800";
     }
   };
-  
-  // Determine badge color for class
-  const getClassBadgeColor = () => {
-    switch (student.class) {
-      case "Nursery":
+
+  // Get badge color based on writing speed
+  const getWritingSpeedColor = (speed: string) => {
+    switch (speed) {
+      case "Speed Writing":
+        return "bg-blue-100 text-blue-800";
+      case "Slow Writing":
         return "bg-yellow-100 text-yellow-800";
+      case "N/A":
+        return "bg-gray-100 text-gray-800";
+      default:
+        return "bg-gray-100 text-gray-800";
+    }
+  };
+
+  // Get badge color based on class
+  const getClassColor = (cls: string) => {
+    switch (cls) {
+      case "Nursery":
+        return "bg-purple-100 text-purple-800";
       case "LKG":
         return "bg-blue-100 text-blue-800";
       case "UKG":
         return "bg-green-100 text-green-800";
       default:
-        return "";
+        return "bg-gray-100 text-gray-800";
     }
   };
-  
+
   return (
-    <Card className="overflow-hidden flex flex-col">
-      <div className={`flex justify-between items-center p-4 border-b border-gray-200 ${getBgColor()}`}>
+    <Card className="overflow-hidden">
+      <CardHeader className="flex justify-between items-center p-4 border-b bg-gray-50">
         <div>
-          <Badge 
-            variant="outline" 
-            className={getClassBadgeColor()}
-          >
+          <Badge className={getClassColor(student.class)}>
             {student.class}
           </Badge>
           <h3 className="mt-1 text-lg font-semibold text-gray-900">{student.name}</h3>
         </div>
-        <div className="flex">
-          <Button variant="ghost" size="sm" onClick={() => onEdit(student)}>
-            <Edit className="h-4 w-4 text-gray-500" />
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => onDelete(student)}>
-            <Trash2 className="h-4 w-4 text-gray-500" />
-          </Button>
-        </div>
-      </div>
-      
-      <div className="flex-1 flex">
-        <div className="w-1/3 bg-gray-50 flex items-center justify-center p-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={onEdit}>
+              <Edit className="mr-2 h-4 w-4" />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem 
+              onClick={onDelete}
+              className="text-red-600"
+            >
+              <Trash className="mr-2 h-4 w-4" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </CardHeader>
+
+      <CardContent className="p-0 flex">
+        <div className="w-1/3 bg-gray-50 flex items-center justify-center p-4">
           {student.photoUrl ? (
             <img 
               src={student.photoUrl} 
-              alt={`${student.name}'s photo`} 
+              alt={student.name}
               className="h-24 w-24 rounded-full object-cover border-2 border-white shadow" 
             />
           ) : (
-            <div className="h-24 w-24 rounded-full bg-purple-100 flex items-center justify-center text-3xl font-medium text-purple-600">
-              {student.name.charAt(0)}
+            <div className="h-24 w-24 rounded-full bg-purple-100 flex items-center justify-center border-2 border-white shadow">
+              <span className="text-purple-600 text-2xl font-medium">
+                {student.name.charAt(0).toUpperCase()}
+              </span>
             </div>
           )}
         </div>
-        
         <div className="w-2/3 p-4">
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div>
@@ -100,39 +127,45 @@ export default function StudentCard({
             </div>
             <div>
               <p className="text-gray-500">Learning Ability</p>
-              <p className="font-medium">{student.learningAbility}</p>
+              <Badge className={getLearningAbilityColor(student.learningAbility)}>
+                {student.learningAbility}
+              </Badge>
             </div>
             <div>
               <p className="text-gray-500">Writing Speed</p>
-              <p className="font-medium">{student.writingSpeed}</p>
+              <Badge className={getWritingSpeedColor(student.writingSpeed || "N/A")}>
+                {student.writingSpeed || "N/A"}
+              </Badge>
             </div>
-            <div>
-              <p className="text-gray-500">Teacher</p>
-              <p className="font-medium">{teacherName}</p>
-            </div>
+            {teacherName && (
+              <div>
+                <p className="text-gray-500">Teacher</p>
+                <p className="font-medium">{teacherName}</p>
+              </div>
+            )}
           </div>
+          {student.notes && (
+            <div className="mt-2">
+              <p className="text-gray-500">Notes</p>
+              <p className="text-sm text-gray-700 line-clamp-2">{student.notes}</p>
+            </div>
+          )}
         </div>
-      </div>
-      
-      <CardFooter className="bg-gray-50 px-4 py-3 border-t border-gray-200 flex justify-between">
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          className="text-xs text-purple-600 hover:text-purple-500 font-medium"
-          onClick={() => onViewProgress(student)}
-        >
-          <FileText className="h-3.5 w-3.5 mr-1" />
-          View Progress
-        </Button>
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          className="text-xs text-purple-600 hover:text-purple-500 font-medium"
-          onClick={() => onAddProgress(student)}
-        >
-          <PenLine className="h-3.5 w-3.5 mr-1" />
-          Add Progress
-        </Button>
+      </CardContent>
+
+      <CardFooter className="bg-gray-50 px-4 py-3 border-t flex justify-between">
+        <Link href={`/progress?studentId=${student.id}`}>
+          <Button variant="outline" size="sm" className="text-xs text-purple-600 hover:text-purple-700">
+            <Users className="mr-1 h-3 w-3" />
+            View Profile
+          </Button>
+        </Link>
+        <Link href={`/progress?action=add&studentId=${student.id}`}>
+          <Button variant="outline" size="sm" className="text-xs text-purple-600 hover:text-purple-700">
+            <ChartBar className="mr-1 h-3 w-3" />
+            Add Progress
+          </Button>
+        </Link>
       </CardFooter>
     </Card>
   );

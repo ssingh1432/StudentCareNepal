@@ -1,314 +1,283 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useLocation } from "wouter";
+import { Redirect } from "wouter";
 import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { insertUserSchema } from "@shared/schema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Loader2 } from "lucide-react";
 
 // Login form schema
 const loginSchema = z.object({
-  email: z.string().email({ message: "Please enter a valid email" }),
-  password: z.string().min(6, { message: "Password must be at least 6 characters" }),
+  username: z.string().min(1, { message: "Username is required" }),
+  password: z.string().min(1, { message: "Password is required" }),
 });
-
-type LoginFormValues = z.infer<typeof loginSchema>;
 
 // Registration form schema
-const registerSchema = insertUserSchema.extend({
-  confirmedPassword: z.string().min(6, { message: "Password must be at least 6 characters" }),
-}).refine((data) => data.password === data.confirmedPassword, {
-  message: "Passwords don't match",
-  path: ["confirmedPassword"],
+const registerSchema = z.object({
+  username: z.string().min(3, { message: "Username must be at least 3 characters" }),
+  password: z.string().min(6, { message: "Password must be at least 6 characters" }),
+  name: z.string().min(1, { message: "Name is required" }),
+  email: z.string().email({ message: "Please enter a valid email" }),
 });
-
-type RegisterFormValues = z.infer<typeof registerSchema>;
 
 export default function AuthPage() {
   const { user, loginMutation, registerMutation } = useAuth();
-  const [, navigate] = useLocation();
   const [activeTab, setActiveTab] = useState<string>("login");
-
-  const loginForm = useForm<LoginFormValues>({
+  
+  // Login form
+  const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: "",
+      username: "",
       password: "",
     },
   });
 
-  const registerForm = useForm<RegisterFormValues>({
+  // Register form
+  const registerForm = useForm<z.infer<typeof registerSchema>>({
     resolver: zodResolver(registerSchema),
     defaultValues: {
-      email: "",
+      username: "",
       password: "",
-      confirmedPassword: "",
       name: "",
-      role: "teacher",
-      assignedClasses: [],
+      email: "",
     },
   });
 
-  useEffect(() => {
-    if (user) {
-      navigate("/");
-    }
-  }, [user, navigate]);
-
-  const onLoginSubmit = async (data: LoginFormValues) => {
-    loginMutation.mutate(data);
+  // Handle login form submission
+  const onLoginSubmit = (values: z.infer<typeof loginSchema>) => {
+    loginMutation.mutate(values);
   };
 
-  const onRegisterSubmit = async (data: RegisterFormValues) => {
-    const { confirmedPassword, ...userData } = data;
-    registerMutation.mutate(userData);
+  // Handle registration form submission
+  const onRegisterSubmit = (values: z.infer<typeof registerSchema>) => {
+    registerMutation.mutate({
+      ...values,
+      role: "teacher", // Default role for new registrations
+      assignedClasses: ["Nursery"], // Default class assignment
+    });
   };
+
+  // Redirect if already logged in
+  if (user) {
+    return <Redirect to="/" />;
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-purple-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <h1 className="text-center text-3xl font-extrabold text-purple-600">
+        <h1 className="text-center text-3xl font-extrabold text-purple-900">
           Nepal Central High School
         </h1>
-        <h2 className="mt-2 text-center text-xl font-semibold text-gray-900">
-          Pre-Primary Record System
+        <h2 className="mt-2 text-center text-xl font-semibold text-purple-700">
+          Pre-Primary Student Record System
         </h2>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-5xl">
+      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div>
-              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="login">Login</TabsTrigger>
-                  <TabsTrigger value="register">Register</TabsTrigger>
-                </TabsList>
+          <Tabs defaultValue="login" value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid w-full grid-cols-2 mb-6">
+              <TabsTrigger value="login">Login</TabsTrigger>
+              <TabsTrigger value="register">Register</TabsTrigger>
+            </TabsList>
 
-                <TabsContent value="login">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Login to your account</CardTitle>
-                      <CardDescription>
-                        Enter your credentials to access the system
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <Form {...loginForm}>
-                        <form onSubmit={loginForm.handleSubmit(onLoginSubmit)} className="space-y-4">
-                          <FormField
-                            control={loginForm.control}
-                            name="email"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Email</FormLabel>
-                                <FormControl>
-                                  <Input placeholder="your.email@school.com" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={loginForm.control}
-                            name="password"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Password</FormLabel>
-                                <FormControl>
-                                  <Input type="password" placeholder="••••••" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <Button 
-                            type="submit" 
-                            className="w-full bg-purple-600 hover:bg-purple-700"
-                            disabled={loginMutation.isPending}
-                          >
-                            {loginMutation.isPending ? "Logging in..." : "Login"}
-                          </Button>
-                        </form>
-                      </Form>
-                    </CardContent>
-                    <CardFooter className="flex justify-center">
-                      <p className="text-sm text-gray-500">
-                        Don't have an account?{" "}
-                        <button 
-                          onClick={() => setActiveTab("register")}
-                          className="text-purple-600 font-medium hover:text-purple-500"
-                        >
-                          Register
-                        </button>
-                      </p>
-                    </CardFooter>
-                  </Card>
-                </TabsContent>
+            {/* Login Form */}
+            <TabsContent value="login">
+              <Form {...loginForm}>
+                <form onSubmit={loginForm.handleSubmit(onLoginSubmit)} className="space-y-6">
+                  <FormField
+                    control={loginForm.control}
+                    name="username"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Username</FormLabel>
+                        <FormControl>
+                          <Input placeholder="admin@school.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                <TabsContent value="register">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Create an account</CardTitle>
-                      <CardDescription>
-                        Register to access the pre-primary record system
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <Form {...registerForm}>
-                        <form onSubmit={registerForm.handleSubmit(onRegisterSubmit)} className="space-y-4">
-                          <FormField
-                            control={registerForm.control}
-                            name="name"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Full Name</FormLabel>
-                                <FormControl>
-                                  <Input placeholder="Your full name" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={registerForm.control}
-                            name="email"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Email</FormLabel>
-                                <FormControl>
-                                  <Input placeholder="your.email@school.com" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={registerForm.control}
-                            name="password"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Password</FormLabel>
-                                <FormControl>
-                                  <Input type="password" placeholder="••••••" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={registerForm.control}
-                            name="confirmedPassword"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Confirm Password</FormLabel>
-                                <FormControl>
-                                  <Input type="password" placeholder="••••••" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={registerForm.control}
-                            name="role"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Role</FormLabel>
-                                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Select role" />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    <SelectItem value="teacher">Teacher</SelectItem>
-                                    <SelectItem value="admin">Admin</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <Button 
-                            type="submit" 
-                            className="w-full bg-purple-600 hover:bg-purple-700"
-                            disabled={registerMutation.isPending}
-                          >
-                            {registerMutation.isPending ? "Registering..." : "Register"}
-                          </Button>
-                        </form>
-                      </Form>
-                    </CardContent>
-                    <CardFooter className="flex justify-center">
-                      <p className="text-sm text-gray-500">
-                        Already have an account?{" "}
-                        <button 
-                          onClick={() => setActiveTab("login")}
-                          className="text-purple-600 font-medium hover:text-purple-500"
-                        >
-                          Login
-                        </button>
-                      </p>
-                    </CardFooter>
-                  </Card>
-                </TabsContent>
-              </Tabs>
-            </div>
+                  <FormField
+                    control={loginForm.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Password</FormLabel>
+                        <FormControl>
+                          <Input type="password" placeholder="••••••••" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-            <div className="hidden md:flex flex-col justify-center">
-              <div className="text-center">
-                <h3 className="text-2xl font-semibold text-gray-900 mb-4">
-                  Pre-Primary Student Record-Keeping System
-                </h3>
-                <div className="bg-purple-100 p-6 rounded-lg">
-                  <h4 className="text-lg font-medium text-purple-600 mb-4">Key Features</h4>
-                  <ul className="text-left space-y-2">
-                    <li className="flex items-center">
-                      <svg className="h-5 w-5 text-purple-600 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      Student management with photo uploads
-                    </li>
-                    <li className="flex items-center">
-                      <svg className="h-5 w-5 text-purple-600 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      Progress tracking (Nursery, LKG, UKG)
-                    </li>
-                    <li className="flex items-center">
-                      <svg className="h-5 w-5 text-purple-600 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      Teaching plans with AI suggestions
-                    </li>
-                    <li className="flex items-center">
-                      <svg className="h-5 w-5 text-purple-600 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      PDF and Excel report generation
-                    </li>
-                    <li className="flex items-center">
-                      <svg className="h-5 w-5 text-purple-600 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      Offline support
-                    </li>
-                  </ul>
-                </div>
-                <p className="mt-6 text-sm text-gray-500">
-                  Nepal Central High School, Narephat, Kathmandu
+                  <Button 
+                    type="submit" 
+                    className="w-full bg-purple-600 hover:bg-purple-700"
+                    disabled={loginMutation.isPending}
+                  >
+                    {loginMutation.isPending ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Logging in...
+                      </>
+                    ) : (
+                      "Login"
+                    )}
+                  </Button>
+                </form>
+              </Form>
+
+              <div className="mt-6">
+                <p className="text-sm text-gray-600 text-center">
+                  Don't have an account?{" "}
+                  <button 
+                    className="text-purple-600 hover:text-purple-500 font-medium"
+                    onClick={() => setActiveTab("register")}
+                  >
+                    Register
+                  </button>
                 </p>
               </div>
-            </div>
-          </div>
+
+              <div className="mt-6">
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-300"></div>
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="px-2 bg-white text-gray-500">Default Credentials</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-2">
+                  <Card>
+                    <CardHeader className="py-2">
+                      <CardTitle className="text-sm">Admin</CardTitle>
+                    </CardHeader>
+                    <CardContent className="py-2">
+                      <p className="text-xs">Username: admin@school.com</p>
+                      <p className="text-xs">Password: lkg123</p>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="py-2">
+                      <CardTitle className="text-sm">Teacher</CardTitle>
+                    </CardHeader>
+                    <CardContent className="py-2">
+                      <p className="text-xs">Username: teacher1@school.com</p>
+                      <p className="text-xs">Password: lkg123</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* Registration Form */}
+            <TabsContent value="register">
+              <Form {...registerForm}>
+                <form onSubmit={registerForm.handleSubmit(onRegisterSubmit)} className="space-y-4">
+                  <FormField
+                    control={registerForm.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Full Name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="John Doe" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={registerForm.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email</FormLabel>
+                        <FormControl>
+                          <Input type="email" placeholder="john.doe@example.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={registerForm.control}
+                    name="username"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Username</FormLabel>
+                        <FormControl>
+                          <Input placeholder="johndoe" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={registerForm.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Password</FormLabel>
+                        <FormControl>
+                          <Input type="password" placeholder="••••••••" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <Button 
+                    type="submit" 
+                    className="w-full bg-purple-600 hover:bg-purple-700"
+                    disabled={registerMutation.isPending}
+                  >
+                    {registerMutation.isPending ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Registering...
+                      </>
+                    ) : (
+                      "Register"
+                    )}
+                  </Button>
+                </form>
+              </Form>
+
+              <div className="mt-6">
+                <p className="text-sm text-gray-600 text-center">
+                  Already have an account?{" "}
+                  <button 
+                    className="text-purple-600 hover:text-purple-500 font-medium"
+                    onClick={() => setActiveTab("login")}
+                  >
+                    Login
+                  </button>
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <div className="mt-6 text-center">
+          <p className="text-xs text-gray-500">
+            © {new Date().getFullYear()} Nepal Central High School. All rights reserved.
+          </p>
         </div>
       </div>
     </div>
