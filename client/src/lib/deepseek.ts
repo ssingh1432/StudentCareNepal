@@ -1,98 +1,64 @@
-/**
- * Helper functions for interacting with the DeepSeek API
- */
-
+import { useState } from "react";
 import { apiRequest } from "./queryClient";
+import { useToast } from "@/hooks/use-toast";
 
-// Function to get activity suggestions from the DeepSeek API
-export const getActivitySuggestions = async (
-  promptDetails: {
-    type: "Annual" | "Monthly" | "Weekly";
-    class: "Nursery" | "LKG" | "UKG";
-    topic?: string;
-    count?: number;
-  }
-): Promise<string> => {
-  const { type, class: classLevel, topic, count = 3 } = promptDetails;
-  
-  // Create a formatted prompt for the DeepSeek API
-  let prompt = `Suggest ${count} educational activities for ${classLevel} students`;
-  
-  if (type) {
-    prompt += ` for a ${type.toLowerCase()} teaching plan`;
-  }
-  
-  if (topic) {
-    prompt += ` focused on ${topic}`;
-  }
-  
-  prompt += `. The activities should be age-appropriate for ${classLevel} students (${
-    classLevel === "Nursery" 
-      ? "3 years old" 
-      : classLevel === "LKG" 
-        ? "4 years old" 
-        : "5 years old"
-  }) and align with Nepal's Complete Pre-Primary System (ECED). Include materials needed and expected outcomes.`;
-  
-  try {
-    const response = await apiRequest("POST", "/api/ai-suggestions", { prompt });
-    const data = await response.json();
-    return data.suggestion;
-  } catch (error) {
-    console.error("Error getting AI suggestions:", error);
-    throw new Error("Failed to get AI suggestions. Please try again later.");
-  }
-};
+interface DeepSeekConfig {
+  planType: string;
+  planClass: string;
+  prompt?: string;
+}
 
-// Function to get learning goal suggestions
-export const getLearningGoalSuggestions = async (
-  promptDetails: {
-    type: "Annual" | "Monthly" | "Weekly";
-    class: "Nursery" | "LKG" | "UKG";
-    topic?: string;
-    count?: number;
-  }
-): Promise<string> => {
-  const { type, class: classLevel, topic, count = 3 } = promptDetails;
-  
-  let prompt = `Suggest ${count} learning goals for ${classLevel} students`;
-  
-  if (type) {
-    prompt += ` for a ${type.toLowerCase()} teaching plan`;
-  }
-  
-  if (topic) {
-    prompt += ` focused on ${topic}`;
-  }
-  
-  prompt += `. The goals should be age-appropriate for ${classLevel} students (${
-    classLevel === "Nursery" 
-      ? "3 years old" 
-      : classLevel === "LKG" 
-        ? "4 years old" 
-        : "5 years old"
-  }) and align with Nepal's Complete Pre-Primary System (ECED). Include specific measurable outcomes.`;
-  
-  try {
-    const response = await apiRequest("POST", "/api/ai-suggestions", { prompt });
-    const data = await response.json();
-    return data.suggestion;
-  } catch (error) {
-    console.error("Error getting AI suggestions:", error);
-    throw new Error("Failed to get AI suggestions. Please try again later.");
-  }
-};
+interface UseDeepSeekAIProps {
+  onSuccess?: (suggestions: string) => void;
+}
 
-// Function to check if the DeepSeek API is available
-export const checkDeepSeekApiAvailability = async (): Promise<boolean> => {
-  try {
-    const testPrompt = "Test prompt for DeepSeek API availability check";
-    const response = await apiRequest("POST", "/api/ai-suggestions", { prompt: testPrompt });
-    const data = await response.json();
-    
-    return !!data.suggestion;
-  } catch (error) {
-    console.error("DeepSeek API not available:", error);
-    return false;
-  }
-};
+export function useDeepSeekAI({ onSuccess }: UseDeepSeekAIProps = {}) {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const { toast } = useToast();
+
+  const generateSuggestions = async (config: DeepSeekConfig) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Format the prompt based on config
+      const defaultPrompt = `Suggest 3 activities for ${config.planClass} students that align with ${config.planType} teaching plan`;
+      const finalPrompt = config.prompt || defaultPrompt;
+
+      const response = await apiRequest("POST", "/api/ai/suggestions", {
+        prompt: finalPrompt,
+        planType: config.planType,
+        planClass: config.planClass,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(errorData || "Failed to generate suggestions");
+      }
+
+      const data = await response.json();
+      if (onSuccess) {
+        onSuccess(data.suggestions);
+      }
+      return data.suggestions;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to generate suggestions";
+      setError(new Error(errorMessage));
+      toast({
+        title: "Error generating suggestions",
+        description: errorMessage,
+        variant: "destructive",
+      });
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return {
+    generateSuggestions,
+    isLoading,
+    error,
+  };
+}

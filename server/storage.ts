@@ -1,12 +1,8 @@
-import { 
-  User, InsertUser, Student, InsertStudent, Progress, InsertProgress, 
-  TeachingPlan, InsertTeachingPlan, AiSuggestion, InsertAiSuggestion,
-  users, students, progress, teachingPlans, aiSuggestions
-} from "@shared/schema";
-import createMemoryStore from "memorystore";
+import { users, students, progress, teachingPlans } from "@shared/schema";
+import type { User, InsertUser, Student, InsertStudent, Progress, InsertProgress, TeachingPlan, InsertTeachingPlan } from "@shared/schema";
 import session from "express-session";
+import createMemoryStore from "memorystore";
 
-// Memory store for sessions
 const MemoryStore = createMemoryStore(session);
 
 export interface IStorage {
@@ -14,278 +10,321 @@ export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  updateUser(id: number, user: Partial<InsertUser>): Promise<User | undefined>;
-  deleteUser(id: number): Promise<boolean>;
-  getAllTeachers(): Promise<User[]>;
-  
+  updateUser(id: number, user: Partial<InsertUser>): Promise<User>;
+  deleteUser(id: number): Promise<void>;
+  getTeachers(): Promise<User[]>;
+
   // Student operations
-  getStudent(id: number): Promise<Student | undefined>;
-  getStudentsByClass(className: string): Promise<Student[]>;
-  getStudentsByTeacher(teacherId: number): Promise<Student[]>;
-  getAllStudents(): Promise<Student[]>;
+  getStudents(teacherId: number, isAdmin: boolean): Promise<Student[]>;
+  getStudentById(id: number): Promise<Student | undefined>;
   createStudent(student: InsertStudent): Promise<Student>;
-  updateStudent(id: number, student: Partial<InsertStudent>): Promise<Student | undefined>;
-  deleteStudent(id: number): Promise<boolean>;
-  assignStudentToTeacher(studentId: number, teacherId: number): Promise<boolean>;
+  updateStudent(id: number, student: Partial<InsertStudent>): Promise<Student>;
+  deleteStudent(id: number): Promise<void>;
 
   // Progress operations
+  getStudentProgress(studentId: number): Promise<Progress[]>;
   getProgressById(id: number): Promise<Progress | undefined>;
-  getProgressByStudent(studentId: number): Promise<Progress[]>;
   createProgress(progress: InsertProgress): Promise<Progress>;
-  updateProgress(id: number, progress: Partial<InsertProgress>): Promise<Progress | undefined>;
-  deleteProgress(id: number): Promise<boolean>;
+  updateProgress(id: number, progress: Partial<InsertProgress>): Promise<Progress>;
+  deleteProgress(id: number): Promise<void>;
 
-  // Teaching Plan operations
-  getTeachingPlan(id: number): Promise<TeachingPlan | undefined>;
-  getTeachingPlansByClass(className: string): Promise<TeachingPlan[]>;
-  getTeachingPlansByType(type: string): Promise<TeachingPlan[]>;
-  getTeachingPlansByCreator(creatorId: number): Promise<TeachingPlan[]>;
-  getAllTeachingPlans(): Promise<TeachingPlan[]>;
+  // Teaching plan operations
+  getTeachingPlans(teacherId: number, isAdmin: boolean, type?: string, classLevel?: string): Promise<TeachingPlan[]>;
+  getTeachingPlanById(id: number): Promise<TeachingPlan | undefined>;
   createTeachingPlan(plan: InsertTeachingPlan): Promise<TeachingPlan>;
-  updateTeachingPlan(id: number, plan: Partial<InsertTeachingPlan>): Promise<TeachingPlan | undefined>;
-  deleteTeachingPlan(id: number): Promise<boolean>;
+  updateTeachingPlan(id: number, plan: Partial<InsertTeachingPlan>): Promise<TeachingPlan>;
+  deleteTeachingPlan(id: number): Promise<void>;
 
-  // AI Suggestion operations
-  getAiSuggestionByPrompt(prompt: string): Promise<AiSuggestion | undefined>;
-  createAiSuggestion(suggestion: InsertAiSuggestion): Promise<AiSuggestion>;
+  // Report operations
+  getProgressReport(teacherId: number, isAdmin: boolean, classLevel?: string, filterTeacherId?: number, startDate?: string, endDate?: string): Promise<any>;
+  getTeachingPlanReport(teacherId: number, isAdmin: boolean, classLevel?: string, filterTeacherId?: number): Promise<any>;
 
   // Session store
   sessionStore: session.SessionStore;
 }
 
 export class MemStorage implements IStorage {
-  private usersData: Map<number, User>;
-  private studentsData: Map<number, Student>;
-  private progressData: Map<number, Progress>;
-  private teachingPlansData: Map<number, TeachingPlan>;
-  private aiSuggestionsData: Map<number, AiSuggestion>;
-  
+  private usersMap: Map<number, User>;
+  private studentsMap: Map<number, Student>;
+  private progressMap: Map<number, Progress>;
+  private teachingPlansMap: Map<number, TeachingPlan>;
+  private currentUserId: number;
+  private currentStudentId: number;
+  private currentProgressId: number;
+  private currentPlanId: number;
   sessionStore: session.SessionStore;
-  
-  private userIdCounter: number;
-  private studentIdCounter: number;
-  private progressIdCounter: number;
-  private teachingPlanIdCounter: number;
-  private aiSuggestionIdCounter: number;
 
   constructor() {
-    this.usersData = new Map();
-    this.studentsData = new Map();
-    this.progressData = new Map();
-    this.teachingPlansData = new Map();
-    this.aiSuggestionsData = new Map();
-    
-    this.userIdCounter = 1;
-    this.studentIdCounter = 1;
-    this.progressIdCounter = 1;
-    this.teachingPlanIdCounter = 1;
-    this.aiSuggestionIdCounter = 1;
-    
+    this.usersMap = new Map();
+    this.studentsMap = new Map();
+    this.progressMap = new Map();
+    this.teachingPlansMap = new Map();
+    this.currentUserId = 1;
+    this.currentStudentId = 1;
+    this.currentProgressId = 1;
+    this.currentPlanId = 1;
     this.sessionStore = new MemoryStore({
-      checkPeriod: 86400000, // prune expired entries every 24h
+      checkPeriod: 86400000 // 24 hours
     });
-    
-    // Initialize with admin user
+
+    // Seed admin user
     this.createUser({
       email: "admin@school.com",
-      password: "lkg123",
-      name: "Admin User",
+      password: "$2b$10$SJN10usFH6NjQIzp0A2YmOcNK/zG5fzl8RRpvg.DgTEQz5kC.eJ7y", // hashed "lkg123"
       role: "admin",
+      name: "Admin User",
       assignedClasses: ["Nursery", "LKG", "UKG"]
     });
-    
-    // Initialize with teacher users
+
+    // Seed teachers
     this.createUser({
       email: "teacher1@school.com",
-      password: "lkg123",
-      name: "Teacher Nursery",
+      password: "$2b$10$SJN10usFH6NjQIzp0A2YmOcNK/zG5fzl8RRpvg.DgTEQz5kC.eJ7y", // hashed "lkg123"
       role: "teacher",
+      name: "Nursery Teacher",
       assignedClasses: ["Nursery"]
     });
-    
+
     this.createUser({
       email: "teacher2@school.com",
-      password: "lkg123",
-      name: "Teacher LKG",
+      password: "$2b$10$SJN10usFH6NjQIzp0A2YmOcNK/zG5fzl8RRpvg.DgTEQz5kC.eJ7y", // hashed "lkg123"
       role: "teacher",
+      name: "LKG Teacher",
       assignedClasses: ["LKG"]
     });
-    
+
     this.createUser({
       email: "teacher3@school.com",
-      password: "lkg123",
-      name: "Teacher UKG",
+      password: "$2b$10$SJN10usFH6NjQIzp0A2YmOcNK/zG5fzl8RRpvg.DgTEQz5kC.eJ7y", // hashed "lkg123"
       role: "teacher",
+      name: "UKG Teacher",
       assignedClasses: ["UKG"]
     });
   }
 
   // User operations
   async getUser(id: number): Promise<User | undefined> {
-    return this.usersData.get(id);
+    return this.usersMap.get(id);
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    return Array.from(this.usersData.values()).find(user => user.email === email);
+    return Array.from(this.usersMap.values()).find(user => user.email === email);
   }
 
-  async createUser(userData: InsertUser): Promise<User> {
-    const id = this.userIdCounter++;
-    const now = new Date();
-    const user: User = { ...userData, id, createdAt: now };
-    this.usersData.set(id, user);
-    return user;
+  async createUser(user: InsertUser): Promise<User> {
+    const id = this.currentUserId++;
+    const newUser: User = { ...user, id };
+    this.usersMap.set(id, newUser);
+    return newUser;
   }
 
-  async updateUser(id: number, userData: Partial<InsertUser>): Promise<User | undefined> {
-    const user = this.usersData.get(id);
-    if (!user) return undefined;
-    
+  async updateUser(id: number, userData: Partial<InsertUser>): Promise<User> {
+    const user = this.usersMap.get(id);
+    if (!user) {
+      throw new Error(`User with ID ${id} not found`);
+    }
     const updatedUser = { ...user, ...userData };
-    this.usersData.set(id, updatedUser);
+    this.usersMap.set(id, updatedUser);
     return updatedUser;
   }
 
-  async deleteUser(id: number): Promise<boolean> {
-    return this.usersData.delete(id);
+  async deleteUser(id: number): Promise<void> {
+    if (!this.usersMap.delete(id)) {
+      throw new Error(`User with ID ${id} not found`);
+    }
   }
 
-  async getAllTeachers(): Promise<User[]> {
-    return Array.from(this.usersData.values()).filter(user => user.role === "teacher");
+  async getTeachers(): Promise<User[]> {
+    return Array.from(this.usersMap.values()).filter(user => user.role === "teacher");
   }
 
   // Student operations
-  async getStudent(id: number): Promise<Student | undefined> {
-    return this.studentsData.get(id);
+  async getStudents(teacherId: number, isAdmin: boolean): Promise<Student[]> {
+    const students = Array.from(this.studentsMap.values());
+    if (isAdmin) {
+      return students;
+    }
+    return students.filter(student => student.teacherId === teacherId);
   }
 
-  async getStudentsByClass(className: string): Promise<Student[]> {
-    return Array.from(this.studentsData.values()).filter(student => student.class === className);
+  async getStudentById(id: number): Promise<Student | undefined> {
+    return this.studentsMap.get(id);
   }
 
-  async getStudentsByTeacher(teacherId: number): Promise<Student[]> {
-    return Array.from(this.studentsData.values()).filter(student => student.teacherId === teacherId);
+  async createStudent(student: InsertStudent): Promise<Student> {
+    const id = this.currentStudentId++;
+    const newStudent: Student = { ...student, id };
+    this.studentsMap.set(id, newStudent);
+    return newStudent;
   }
 
-  async getAllStudents(): Promise<Student[]> {
-    return Array.from(this.studentsData.values());
-  }
-
-  async createStudent(studentData: InsertStudent): Promise<Student> {
-    const id = this.studentIdCounter++;
-    const now = new Date();
-    const student: Student = { ...studentData, id, createdAt: now };
-    this.studentsData.set(id, student);
-    return student;
-  }
-
-  async updateStudent(id: number, studentData: Partial<InsertStudent>): Promise<Student | undefined> {
-    const student = this.studentsData.get(id);
-    if (!student) return undefined;
-    
+  async updateStudent(id: number, studentData: Partial<InsertStudent>): Promise<Student> {
+    const student = this.studentsMap.get(id);
+    if (!student) {
+      throw new Error(`Student with ID ${id} not found`);
+    }
     const updatedStudent = { ...student, ...studentData };
-    this.studentsData.set(id, updatedStudent);
+    this.studentsMap.set(id, updatedStudent);
     return updatedStudent;
   }
 
-  async deleteStudent(id: number): Promise<boolean> {
-    return this.studentsData.delete(id);
-  }
-
-  async assignStudentToTeacher(studentId: number, teacherId: number): Promise<boolean> {
-    const student = this.studentsData.get(studentId);
-    if (!student) return false;
-    
-    const teacher = this.usersData.get(teacherId);
-    if (!teacher || teacher.role !== "teacher") return false;
-    
-    student.teacherId = teacherId;
-    this.studentsData.set(studentId, student);
-    return true;
+  async deleteStudent(id: number): Promise<void> {
+    if (!this.studentsMap.delete(id)) {
+      throw new Error(`Student with ID ${id} not found`);
+    }
   }
 
   // Progress operations
-  async getProgressById(id: number): Promise<Progress | undefined> {
-    return this.progressData.get(id);
+  async getStudentProgress(studentId: number): Promise<Progress[]> {
+    return Array.from(this.progressMap.values()).filter(p => p.studentId === studentId);
   }
 
-  async getProgressByStudent(studentId: number): Promise<Progress[]> {
-    return Array.from(this.progressData.values()).filter(p => p.studentId === studentId);
+  async getProgressById(id: number): Promise<Progress | undefined> {
+    return this.progressMap.get(id);
   }
 
   async createProgress(progressData: InsertProgress): Promise<Progress> {
-    const id = this.progressIdCounter++;
-    const progress: Progress = { ...progressData, id };
-    this.progressData.set(id, progress);
-    return progress;
+    const id = this.currentProgressId++;
+    const newProgress: Progress = { ...progressData, id };
+    this.progressMap.set(id, newProgress);
+    return newProgress;
   }
 
-  async updateProgress(id: number, progressData: Partial<InsertProgress>): Promise<Progress | undefined> {
-    const progress = this.progressData.get(id);
-    if (!progress) return undefined;
-    
-    const updatedProgress = { ...progress, ...progressData };
-    this.progressData.set(id, updatedProgress);
+  async updateProgress(id: number, progressData: Partial<InsertProgress>): Promise<Progress> {
+    const existingProgress = this.progressMap.get(id);
+    if (!existingProgress) {
+      throw new Error(`Progress with ID ${id} not found`);
+    }
+    const updatedProgress = { ...existingProgress, ...progressData };
+    this.progressMap.set(id, updatedProgress);
     return updatedProgress;
   }
 
-  async deleteProgress(id: number): Promise<boolean> {
-    return this.progressData.delete(id);
+  async deleteProgress(id: number): Promise<void> {
+    if (!this.progressMap.delete(id)) {
+      throw new Error(`Progress with ID ${id} not found`);
+    }
   }
 
-  // Teaching Plan operations
-  async getTeachingPlan(id: number): Promise<TeachingPlan | undefined> {
-    return this.teachingPlansData.get(id);
-  }
-
-  async getTeachingPlansByClass(className: string): Promise<TeachingPlan[]> {
-    return Array.from(this.teachingPlansData.values()).filter(plan => plan.class === className);
-  }
-
-  async getTeachingPlansByType(type: string): Promise<TeachingPlan[]> {
-    return Array.from(this.teachingPlansData.values()).filter(plan => plan.type === type);
-  }
-
-  async getTeachingPlansByCreator(creatorId: number): Promise<TeachingPlan[]> {
-    return Array.from(this.teachingPlansData.values()).filter(plan => plan.createdBy === creatorId);
-  }
-
-  async getAllTeachingPlans(): Promise<TeachingPlan[]> {
-    return Array.from(this.teachingPlansData.values());
-  }
-
-  async createTeachingPlan(planData: InsertTeachingPlan): Promise<TeachingPlan> {
-    const id = this.teachingPlanIdCounter++;
-    const now = new Date();
-    const plan: TeachingPlan = { ...planData, id, createdAt: now };
-    this.teachingPlansData.set(id, plan);
-    return plan;
-  }
-
-  async updateTeachingPlan(id: number, planData: Partial<InsertTeachingPlan>): Promise<TeachingPlan | undefined> {
-    const plan = this.teachingPlansData.get(id);
-    if (!plan) return undefined;
+  // Teaching plan operations
+  async getTeachingPlans(teacherId: number, isAdmin: boolean, type?: string, classLevel?: string): Promise<TeachingPlan[]> {
+    let plans = Array.from(this.teachingPlansMap.values());
     
+    // Filter by teacher if not admin
+    if (!isAdmin) {
+      plans = plans.filter(plan => plan.createdBy === teacherId);
+    }
+    
+    // Apply optional filters
+    if (type) {
+      plans = plans.filter(plan => plan.type === type);
+    }
+    
+    if (classLevel) {
+      plans = plans.filter(plan => plan.class === classLevel);
+    }
+    
+    return plans;
+  }
+
+  async getTeachingPlanById(id: number): Promise<TeachingPlan | undefined> {
+    return this.teachingPlansMap.get(id);
+  }
+
+  async createTeachingPlan(plan: InsertTeachingPlan): Promise<TeachingPlan> {
+    const id = this.currentPlanId++;
+    const newPlan: TeachingPlan = { ...plan, id, createdAt: new Date() };
+    this.teachingPlansMap.set(id, newPlan);
+    return newPlan;
+  }
+
+  async updateTeachingPlan(id: number, planData: Partial<InsertTeachingPlan>): Promise<TeachingPlan> {
+    const plan = this.teachingPlansMap.get(id);
+    if (!plan) {
+      throw new Error(`Teaching plan with ID ${id} not found`);
+    }
     const updatedPlan = { ...plan, ...planData };
-    this.teachingPlansData.set(id, updatedPlan);
+    this.teachingPlansMap.set(id, updatedPlan);
     return updatedPlan;
   }
 
-  async deleteTeachingPlan(id: number): Promise<boolean> {
-    return this.teachingPlansData.delete(id);
+  async deleteTeachingPlan(id: number): Promise<void> {
+    if (!this.teachingPlansMap.delete(id)) {
+      throw new Error(`Teaching plan with ID ${id} not found`);
+    }
   }
 
-  // AI Suggestion operations
-  async getAiSuggestionByPrompt(prompt: string): Promise<AiSuggestion | undefined> {
-    return Array.from(this.aiSuggestionsData.values()).find(s => s.prompt === prompt);
+  // Report operations
+  async getProgressReport(teacherId: number, isAdmin: boolean, classLevel?: string, filterTeacherId?: number, startDate?: string, endDate?: string): Promise<any> {
+    // Get students
+    let students = Array.from(this.studentsMap.values());
+    
+    // Filter by teacher if not admin or if specific teacher is requested
+    if (!isAdmin) {
+      students = students.filter(student => student.teacherId === teacherId);
+    } else if (filterTeacherId) {
+      students = students.filter(student => student.teacherId === filterTeacherId);
+    }
+    
+    // Filter by class if specified
+    if (classLevel) {
+      students = students.filter(student => student.class === classLevel);
+    }
+    
+    // Get progress entries for each student
+    const report = await Promise.all(students.map(async student => {
+      let progressEntries = Array.from(this.progressMap.values()).filter(p => p.studentId === student.id);
+      
+      // Filter by date range if specified
+      if (startDate) {
+        const start = new Date(startDate);
+        progressEntries = progressEntries.filter(p => new Date(p.date) >= start);
+      }
+      
+      if (endDate) {
+        const end = new Date(endDate);
+        progressEntries = progressEntries.filter(p => new Date(p.date) <= end);
+      }
+      
+      // Get teacher name
+      const teacher = this.usersMap.get(student.teacherId);
+      
+      return {
+        student,
+        teacherName: teacher ? teacher.name : 'Unknown',
+        progressEntries
+      };
+    }));
+    
+    return report;
   }
 
-  async createAiSuggestion(suggestionData: InsertAiSuggestion): Promise<AiSuggestion> {
-    const id = this.aiSuggestionIdCounter++;
-    const now = new Date();
-    const suggestion: AiSuggestion = { ...suggestionData, id, createdAt: now };
-    this.aiSuggestionsData.set(id, suggestion);
-    return suggestion;
+  async getTeachingPlanReport(teacherId: number, isAdmin: boolean, classLevel?: string, filterTeacherId?: number): Promise<any> {
+    let plans = Array.from(this.teachingPlansMap.values());
+    
+    // Filter by teacher if not admin or if specific teacher is requested
+    if (!isAdmin) {
+      plans = plans.filter(plan => plan.createdBy === teacherId);
+    } else if (filterTeacherId) {
+      plans = plans.filter(plan => plan.createdBy === filterTeacherId);
+    }
+    
+    // Filter by class if specified
+    if (classLevel) {
+      plans = plans.filter(plan => plan.class === classLevel);
+    }
+    
+    // Get teacher info for each plan
+    const report = await Promise.all(plans.map(async plan => {
+      const teacher = this.usersMap.get(plan.createdBy);
+      
+      return {
+        plan,
+        teacherName: teacher ? teacher.name : 'Unknown'
+      };
+    }));
+    
+    return report;
   }
 }
 

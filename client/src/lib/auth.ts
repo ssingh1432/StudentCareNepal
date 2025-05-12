@@ -73,3 +73,10 @@ export const hasClassAccess = (user: User | null, className: string): boolean =>
   // Check if the teacher is assigned to this class
   return Array.isArray(user.assignedClasses) && user.assignedClasses.includes(className);
 };
+
+// Function to check if user is authenticated
+export const isAuthenticated = (): boolean => {
+  // In a real app, this would check for a valid session or token
+  // For now, we'll use a simple check to see if we have user data in localStorage
+  return localStorage.getItem('authenticated') === 'true';
+};

@@ -1,89 +1,77 @@
-/**
- * Helper functions for Cloudinary image uploads
- */
+import { useState } from "react";
 
-// Create a Cloudinary upload widget
-export const createUploadWidget = (
-  callback: (error: any, result: any) => void,
-  options: {
-    maxFiles?: number;
-    maxFileSize?: number; // in MB
-    folder?: string;
-  } = {}
-) => {
-  const { maxFiles = 1, maxFileSize = 1, folder = "students" } = options;
+interface CloudinaryUploadProps {
+  onSuccess: (url: string) => void;
+  onError?: (error: Error) => void;
+}
 
-  // @ts-ignore - Cloudinary widget is loaded via script tag
-  if (!window.cloudinary) {
-    console.error("Cloudinary not loaded!");
-    return null;
-  }
-  
-  // @ts-ignore - Cloudinary widget is loaded via script tag
-  return window.cloudinary.createUploadWidget(
-    {
-      cloudName: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || "",
-      uploadPreset: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || "",
-      folder: folder,
-      sources: ["local", "camera"],
-      multiple: maxFiles > 1,
-      maxFiles: maxFiles,
-      maxFileSize: maxFileSize * 1024 * 1024, // Convert MB to bytes
-      resourceType: "image",
-      cropping: true,
-      croppingAspectRatio: 1, // Square cropping for profile photos
-      styles: {
-        palette: {
-          window: "#FFFFFF",
-          windowBorder: "#90A0B3",
-          tabIcon: "#7C3AED",
-          menuIcons: "#5A616A",
-          textDark: "#000000",
-          textLight: "#FFFFFF",
-          link: "#7C3AED",
-          action: "#7C3AED",
-          inactiveTabIcon: "#3f4759",
-          error: "#F44235",
-          inProgress: "#7C3AED",
-          complete: "#20B832",
-          sourceBg: "#F4F5F5",
-        },
-      },
-    },
-    callback
-  );
-};
+interface UploadState {
+  isUploading: boolean;
+  progress: number;
+  error: Error | null;
+}
 
-// Format the Cloudinary URL to optimize images
-export const formatCloudinaryUrl = (url: string, options: { width?: number; height?: number; crop?: string } = {}) => {
-  if (!url || !url.includes('cloudinary.com')) return url;
-  
-  const { width, height, crop = 'fill' } = options;
-  
-  // Replace upload with specific transformation
-  let transformedUrl = url.replace('/upload/', `/upload/c_${crop},g_face,q_auto,f_auto`);
-  
-  if (width) {
-    transformedUrl = transformedUrl.replace('/upload/', `/upload/w_${width},`);
-  }
-  
-  if (height) {
-    transformedUrl = transformedUrl.replace('/upload/', `/upload/h_${height},`);
-  }
-  
-  return transformedUrl;
-};
+const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || "student_photos";
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || "demo";
 
-// Utility function to get image dimensions
-export const getImageDimensions = (file: File): Promise<{ width: number; height: number }> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      resolve({
-        width: img.width,
-        height: img.height,
-      });
-    };
-    img.src = URL.createObjectURL(file);
+export function useCloudinaryUpload({ onSuccess, onError }: CloudinaryUploadProps) {
+  const [uploadState, setUploadState] = useState<UploadState>({
+    isUploading: false,
+    progress: 0,
+    error: null,
   });
-};
+
+  const uploadImage = async (file: File) => {
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.match(/image\/(jpeg|jpg|png)/)) {
+      const error = new Error("Please upload a valid image file (JPG or PNG)");
+      setUploadState({ ...uploadState, error });
+      onError?.(error);
+      return;
+    }
+
+    // Validate file size (max 1MB)
+    if (file.size > 1024 * 1024) {
+      const error = new Error("Image size should not exceed 1MB");
+      setUploadState({ ...uploadState, error });
+      onError?.(error);
+      return;
+    }
+
+    setUploadState({ isUploading: true, progress: 0, error: null });
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+    formData.append("folder", "students");
+
+    try {
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to upload image");
+      }
+
+      const data = await response.json();
+      setUploadState({ isUploading: false, progress: 100, error: null });
+      onSuccess(data.secure_url);
+    } catch (error) {
+      const uploadError = error instanceof Error ? error : new Error("Unknown upload error");
+      setUploadState({ isUploading: false, progress: 0, error: uploadError });
+      onError?.(uploadError);
+    }
+  };
+
+  return {
+    uploadImage,
+    ...uploadState,
+  };
+}

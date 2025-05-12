@@ -1,153 +1,105 @@
-import { useState, useEffect } from "react";
+import { useState, useRef } from "react";
+import { Upload, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Upload, X } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { useCloudinaryUpload } from "@/lib/cloudinary";
 
 interface CloudinaryUploadProps {
-  value?: string;
-  onChange: (url: string) => void;
+  onImageUploaded: (url: string) => void;
+  defaultImage?: string;
   className?: string;
-  maxSizeMB?: number;
 }
 
 export default function CloudinaryUpload({
-  value,
-  onChange,
+  onImageUploaded,
+  defaultImage,
   className = "",
-  maxSizeMB = 1
 }: CloudinaryUploadProps) {
-  const [uploading, setUploading] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | undefined>(value);
-  const [error, setError] = useState<string | null>(null);
-  const { toast } = useToast();
+  const [imageUrl, setImageUrl] = useState<string | null>(defaultImage || null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
-  useEffect(() => {
-    setImageUrl(value);
-  }, [value]);
+  const { uploadImage, isUploading, error } = useCloudinaryUpload({
+    onSuccess: (url) => {
+      setImageUrl(url);
+      onImageUploaded(url);
+    },
+  });
 
-  // Function to handle file upload
-  const uploadImage = async (file: File) => {
-    // Check file size (max 1MB by default)
-    if (file.size > maxSizeMB * 1024 * 1024) {
-      setError(`File size exceeds ${maxSizeMB}MB limit`);
-      toast({
-        variant: "destructive",
-        title: "Upload failed",
-        description: `File size exceeds ${maxSizeMB}MB limit`
-      });
-      return;
-    }
-
-    // Check file type (only JPEG and PNG)
-    if (!["image/jpeg", "image/png"].includes(file.type)) {
-      setError("Only JPEG and PNG formats are allowed");
-      toast({
-        variant: "destructive",
-        title: "Upload failed",
-        description: "Only JPEG and PNG formats are allowed"
-      });
-      return;
-    }
-
-    setUploading(true);
-    setError(null);
-
-    try {
-      // Create a FormData object
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("upload_preset", "student_photos");
-      formData.append("folder", "students");
-
-      // In a real implementation, you would call the Cloudinary API
-      // For this demo, we'll simulate an upload with a delay
-      
-      // Mock response - in a real app, this would come from the Cloudinary API
-      setTimeout(() => {
-        // Create a fake Cloudinary URL with a timestamp
-        const timestamp = new Date().getTime();
-        const mockCloudinaryUrl = `https://res.cloudinary.com/demo/image/upload/v${timestamp}/students/student_${timestamp}.jpg`;
-        
-        setImageUrl(mockCloudinaryUrl);
-        onChange(mockCloudinaryUrl);
-        setUploading(false);
-        
-        toast({
-          title: "Upload successful",
-          description: "Student photo has been uploaded"
-        });
-      }, 1500);
-      
-    } catch (error) {
-      console.error("Upload error:", error);
-      setError("Failed to upload image. Please try again.");
-      toast({
-        variant: "destructive",
-        title: "Upload failed",
-        description: "Failed to upload image. Please try again."
-      });
-      setUploading(false);
-    }
+  const handleButtonClick = () => {
+    fileInputRef.current?.click();
   };
 
-  // File input change handler
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      uploadImage(file);
+    if (e.target.files && e.target.files[0]) {
+      uploadImage(e.target.files[0]);
     }
   };
 
-  // Remove image handler
   const handleRemoveImage = () => {
-    setImageUrl(undefined);
-    onChange("");
+    setImageUrl(null);
+    onImageUploaded("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   return (
-    <div className={`${className}`}>
+    <div className={`flex flex-col items-center ${className}`}>
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept="image/jpeg,image/png"
+        className="hidden"
+      />
+
       {imageUrl ? (
         <div className="relative">
-          <img 
-            src={imageUrl} 
-            alt="Student" 
-            className="h-32 w-32 object-cover rounded-lg" 
+          <img
+            src={imageUrl}
+            alt="Uploaded"
+            className="h-32 w-32 object-cover rounded-full border-2 border-purple-200"
           />
-          <Button
-            type="button"
-            variant="destructive"
-            size="icon"
+          <button
             onClick={handleRemoveImage}
-            className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+            className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1"
+            type="button"
           >
             <X className="h-4 w-4" />
-          </Button>
+          </button>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6 transition-colors hover:border-gray-400">
-          <input
-            type="file"
-            id="cloudinary-upload"
-            accept="image/jpeg,image/png"
-            className="sr-only"
-            onChange={handleFileChange}
-            disabled={uploading}
-          />
-          <label
-            htmlFor="cloudinary-upload"
-            className="flex flex-col items-center cursor-pointer"
-          >
-            <Upload className="h-10 w-10 text-gray-400 mb-2" />
-            <span className="text-sm font-medium text-gray-900">
-              {uploading ? "Uploading..." : "Upload photo"}
-            </span>
-            <span className="text-xs text-gray-500 mt-1">
-              JPEG, PNG up to {maxSizeMB}MB
-            </span>
-          </label>
-          {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+        <div
+          className="h-32 w-32 border-2 border-dashed rounded-full flex items-center justify-center bg-gray-50 cursor-pointer"
+          onClick={handleButtonClick}
+        >
+          {isUploading ? (
+            <Loader2 className="h-8 w-8 text-purple-500 animate-spin" />
+          ) : (
+            <div className="text-center">
+              <Upload className="h-8 w-8 text-gray-400 mx-auto" />
+              <span className="text-xs text-gray-500 mt-1 block">Upload Photo</span>
+            </div>
+          )}
         </div>
       )}
+
+      {!isUploading && (
+        <Button
+          type="button"
+          onClick={handleButtonClick}
+          variant="outline"
+          size="sm"
+          className="mt-2"
+        >
+          {imageUrl ? "Change Photo" : "Upload Photo"}
+        </Button>
+      )}
+
+      {error && (
+        <p className="text-red-500 text-xs mt-1">{error.message}</p>
+      )}
+      
+      <p className="text-xs text-gray-500 mt-1">Max size: 1MB (JPG/PNG)</p>
     </div>
   );
 }
