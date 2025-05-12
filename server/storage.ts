@@ -69,11 +69,11 @@ export class MemStorage implements IStorage {
     });
 
     // Seed demo users
-    const hashedPassword = "c10fda372a36d51af4dca4754ae118056761a7f51f58131a56ffd9f82ead09498ef5e9240ce02e9060df4acc63b70e16ef1c5a44093aa2a619a6a55a76c29e5.9ce5c459a49d41dca0ade49226b7698c"; // "lkg123"
+    const demoPassword = "lkg123"; // Simple plaintext password for demo purposes
     
     this.createUser({
       email: "admin@school.com",
-      password: hashedPassword,
+      password: demoPassword,
       role: "admin",
       name: "Admin User",
       assignedClasses: ["Nursery", "LKG", "UKG"]
@@ -81,7 +81,7 @@ export class MemStorage implements IStorage {
     
     this.createUser({
       email: "teacher1@school.com",
-      password: hashedPassword,
+      password: demoPassword,
       role: "teacher",
       name: "Teacher One",
       assignedClasses: ["Nursery", "LKG"]
@@ -90,7 +90,7 @@ export class MemStorage implements IStorage {
     // Seed additional teachers
     this.createUser({
       email: "teacher2@school.com",
-      password: hashedPassword,
+      password: demoPassword,
       role: "teacher",
       name: "LKG Teacher",
       assignedClasses: ["LKG"]
@@ -98,7 +98,7 @@ export class MemStorage implements IStorage {
 
     this.createUser({
       email: "teacher3@school.com",
-      password: hashedPassword,
+      password: demoPassword,
       role: "teacher",
       name: "UKG Teacher",
       assignedClasses: ["UKG"]
