@@ -68,27 +68,29 @@ export class MemStorage implements IStorage {
       checkPeriod: 86400000 // 24 hours
     });
 
-    // Seed admin user
+    // Seed demo users
+    const hashedPassword = "c10fda372a36d51af4dca4754ae118056761a7f51f58131a56ffd9f82ead09498ef5e9240ce02e9060df4acc63b70e16ef1c5a44093aa2a619a6a55a76c29e5.9ce5c459a49d41dca0ade49226b7698c"; // "lkg123"
+    
     this.createUser({
       email: "admin@school.com",
-      password: "$2b$10$SJN10usFH6NjQIzp0A2YmOcNK/zG5fzl8RRpvg.DgTEQz5kC.eJ7y", // hashed "lkg123"
+      password: hashedPassword,
       role: "admin",
       name: "Admin User",
       assignedClasses: ["Nursery", "LKG", "UKG"]
     });
-
-    // Seed teachers
+    
     this.createUser({
       email: "teacher1@school.com",
-      password: "$2b$10$SJN10usFH6NjQIzp0A2YmOcNK/zG5fzl8RRpvg.DgTEQz5kC.eJ7y", // hashed "lkg123"
+      password: hashedPassword,
       role: "teacher",
-      name: "Nursery Teacher",
-      assignedClasses: ["Nursery"]
+      name: "Teacher One",
+      assignedClasses: ["Nursery", "LKG"]
     });
 
+    // Seed additional teachers
     this.createUser({
       email: "teacher2@school.com",
-      password: "$2b$10$SJN10usFH6NjQIzp0A2YmOcNK/zG5fzl8RRpvg.DgTEQz5kC.eJ7y", // hashed "lkg123"
+      password: hashedPassword,
       role: "teacher",
       name: "LKG Teacher",
       assignedClasses: ["LKG"]
@@ -96,7 +98,7 @@ export class MemStorage implements IStorage {
 
     this.createUser({
       email: "teacher3@school.com",
-      password: "$2b$10$SJN10usFH6NjQIzp0A2YmOcNK/zG5fzl8RRpvg.DgTEQz5kC.eJ7y", // hashed "lkg123"
+      password: hashedPassword,
       role: "teacher",
       name: "UKG Teacher",
       assignedClasses: ["UKG"]
