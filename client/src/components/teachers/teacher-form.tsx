@@ -1,183 +1,163 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { InsertUser, insertUserSchema } from "@shared/schema";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  Form, 
-  FormControl, 
-  FormDescription, 
-  FormField, 
-  FormItem, 
-  FormLabel, 
-  FormMessage 
+
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { 
-  insertUserSchema, 
-  classOptions,
-  User
-} from "@shared/schema";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
-// Create the form schema with validation
-const formSchema = insertUserSchema.extend({
-  // Add client-side validation
-  name: z.string().min(2, { message: "Name must be at least 2 characters" }),
-  email: z.string().email({ message: "Please enter a valid email address" }),
-  username: z.string().min(3, { message: "Username must be at least 3 characters" }),
-  password: z.string().min(6, { message: "Password must be at least 6 characters" }).optional(),
-  confirmPassword: z.string().optional(),
-  assignedClasses: z.array(z.string()).min(1, { message: "Please select at least one class" }),
+// Extend the user schema for the form
+const teacherFormSchema = insertUserSchema.extend({
+  confirmPassword: z.string().min(6, {
+    message: "Password must be at least 6 characters.",
+  }),
+  assignedClasses: z.array(z.string()).refine((value) => value.length > 0, {
+    message: "At least one class must be assigned to the teacher.",
+  }),
 }).refine(
-  (data) => !data.password || data.password === data.confirmPassword,
+  (data) => data.password === data.confirmPassword,
   {
-    message: "Passwords do not match",
+    message: "Passwords don't match",
     path: ["confirmPassword"],
   }
 );
 
-type FormValues = z.infer<typeof formSchema>;
+type TeacherFormValues = z.infer<typeof teacherFormSchema>;
 
 interface TeacherFormProps {
-  teacher?: User | null;
+  open: boolean;
   onClose: () => void;
+  editingTeacher?: { id: number } & Partial<InsertUser>;
 }
 
-export function TeacherForm({ teacher, onClose }: TeacherFormProps) {
+export function TeacherForm({ open, onClose, editingTeacher }: TeacherFormProps) {
   const { toast } = useToast();
-
-  // Set default values based on existing teacher or new teacher
-  const defaultValues: Partial<FormValues> = teacher
-    ? {
-        ...teacher,
-      }
-    : {
-        name: "",
-        email: "",
-        username: "",
-        password: "",
-        confirmPassword: "",
-        role: "teacher",
-        assignedClasses: ["Nursery"],
-      };
-
-  // Initialize form
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues,
+  
+  // Form initialization
+  const form = useForm<TeacherFormValues>({
+    resolver: zodResolver(teacherFormSchema),
+    defaultValues: {
+      email: editingTeacher?.email || "",
+      password: "", // We don't show the existing password
+      confirmPassword: "",
+      name: editingTeacher?.name || "",
+      role: "teacher",
+      assignedClasses: editingTeacher?.assignedClasses || [],
+    },
   });
-
-  // Create or update teacher mutation
+  
+  // Create/update teacher mutation
   const mutation = useMutation({
-    mutationFn: async (data: FormValues) => {
-      // Remove confirmPassword as it's not part of the schema
-      const { confirmPassword, ...teacherData } = data;
+    mutationFn: async (values: TeacherFormValues) => {
+      // Remove confirmPassword from the payload
+      const { confirmPassword, ...teacherData } = values;
       
-      // For existing teachers, if password is empty, remove it
-      if (teacher && !teacherData.password) {
-        delete teacherData.password;
-      }
-
-      // Create or update teacher
-      if (teacher) {
-        return apiRequest("PUT", `/api/users/${teacher.id}`, teacherData);
+      if (editingTeacher?.id) {
+        // If editing and password is empty, remove it from the request
+        if (!teacherData.password) {
+          delete teacherData.password;
+        }
+        return await apiRequest("PUT", `/api/teachers/${editingTeacher.id}`, teacherData);
       } else {
-        return apiRequest("POST", "/api/register", teacherData);
+        return await apiRequest("POST", "/api/teachers", teacherData);
       }
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/teachers'] });
       toast({
-        title: teacher ? "Teacher Updated" : "Teacher Created",
-        description: teacher
-          ? "The teacher has been updated successfully."
-          : "The teacher has been created successfully.",
+        title: editingTeacher ? "Teacher Updated" : "Teacher Added",
+        description: `Teacher has been ${editingTeacher ? "updated" : "added"} successfully.`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/teachers"] });
       onClose();
     },
     onError: (error) => {
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "An error occurred",
+        description: error.message,
         variant: "destructive",
       });
     },
   });
-
-  // Handle form submission
-  const onSubmit = (data: FormValues) => {
-    mutation.mutate(data);
+  
+  const onSubmit = (values: TeacherFormValues) => {
+    mutation.mutate(values);
   };
-
+  
+  const classOptions = [
+    { id: "Nursery", label: "Nursery" },
+    { id: "LKG", label: "LKG" },
+    { id: "UKG", label: "UKG" },
+  ];
+  
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <FormField
-          control={form.control}
-          name="name"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Full Name</FormLabel>
-              <FormControl>
-                <Input placeholder="Enter teacher name" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="email"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Email Address</FormLabel>
-              <FormControl>
-                <Input type="email" placeholder="Enter email address" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <FormField
-            control={form.control}
-            name="username"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Username</FormLabel>
-                <FormControl>
-                  <Input placeholder="Enter username" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name="password"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{teacher ? "New Password (leave blank to keep current)" : "Password"}</FormLabel>
-                <FormControl>
-                  <Input 
-                    type="password" 
-                    placeholder={teacher ? "••••••••" : "Enter password"} 
-                    {...field} 
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          {(form.watch("password") || !teacher) && (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{editingTeacher ? "Edit Teacher" : "Add New Teacher"}</DialogTitle>
+        </DialogHeader>
+        
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Full Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Enter teacher's full name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email Address</FormLabel>
+                  <FormControl>
+                    <Input type="email" placeholder="Enter email address" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            <FormField
+              control={form.control}
+              name="password"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{editingTeacher ? "New Password (leave blank to keep current)" : "Password"}</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="password" 
+                      placeholder={editingTeacher ? "Enter new password (optional)" : "Enter password"} 
+                      {...field} 
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
             <FormField
               control={form.control}
               name="confirmPassword"
@@ -185,90 +165,88 @@ export function TeacherForm({ teacher, onClose }: TeacherFormProps) {
                 <FormItem>
                   <FormLabel>Confirm Password</FormLabel>
                   <FormControl>
-                    <Input type="password" placeholder="Confirm password" {...field} />
+                    <Input 
+                      type="password" 
+                      placeholder="Confirm password" 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-          )}
-        </div>
-
-        <FormField
-          control={form.control}
-          name="assignedClasses"
-          render={() => (
-            <FormItem>
-              <div className="mb-4">
-                <FormLabel>Assign Classes</FormLabel>
-                <FormDescription>
-                  Select the classes this teacher will be responsible for
-                </FormDescription>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {classOptions.map((cls) => (
-                  <FormField
-                    key={cls}
-                    control={form.control}
-                    name="assignedClasses"
-                    render={({ field }) => {
-                      return (
-                        <FormItem
-                          key={cls}
-                          className="flex flex-row items-start space-x-3 space-y-0"
-                        >
-                          <FormControl>
-                            <Checkbox
-                              checked={field.value?.includes(cls)}
-                              onCheckedChange={(checked) => {
-                                const currentValue = [...(field.value || [])];
-                                if (checked) {
-                                  // Add the class if it's not already included
-                                  if (!currentValue.includes(cls)) {
-                                    field.onChange([...currentValue, cls]);
-                                  }
-                                } else {
-                                  // Remove the class if it's included
-                                  field.onChange(currentValue.filter((value) => value !== cls));
-                                }
-                              }}
-                            />
-                          </FormControl>
-                          <FormLabel className="font-normal">
-                            {cls}
-                          </FormLabel>
-                        </FormItem>
-                      );
-                    }}
-                  />
-                ))}
-              </div>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <div className="flex justify-end space-x-3">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onClose}
-            disabled={mutation.isPending}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {teacher ? "Updating..." : "Creating..."}
-              </>
-            ) : (
-              <>{teacher ? "Update" : "Create"} Teacher</>
-            )}
-          </Button>
-        </div>
-      </form>
-    </Form>
+            
+            <FormField
+              control={form.control}
+              name="assignedClasses"
+              render={() => (
+                <FormItem>
+                  <div className="mb-4">
+                    <FormLabel>Assign Classes</FormLabel>
+                    <FormDescription>
+                      Select the classes this teacher will be responsible for.
+                    </FormDescription>
+                  </div>
+                  {classOptions.map((option) => (
+                    <FormField
+                      key={option.id}
+                      control={form.control}
+                      name="assignedClasses"
+                      render={({ field }) => {
+                        return (
+                          <FormItem
+                            key={option.id}
+                            className="flex flex-row items-start space-x-3 space-y-0"
+                          >
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value?.includes(option.id)}
+                                onCheckedChange={(checked) => {
+                                  return checked
+                                    ? field.onChange([...field.value, option.id])
+                                    : field.onChange(
+                                        field.value?.filter(
+                                          (value) => value !== option.id
+                                        )
+                                      )
+                                }}
+                              />
+                            </FormControl>
+                            <FormLabel className="font-normal">
+                              {option.label}
+                            </FormLabel>
+                          </FormItem>
+                        )
+                      }}
+                    />
+                  ))}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+                disabled={mutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button 
+                type="submit" 
+                disabled={mutation.isPending}
+              >
+                {mutation.isPending ? 
+                  (editingTeacher ? "Updating..." : "Adding...") : 
+                  (editingTeacher ? "Update Teacher" : "Add Teacher")
+                }
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
   );
 }

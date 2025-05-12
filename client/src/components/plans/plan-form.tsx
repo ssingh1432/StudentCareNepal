@@ -1,21 +1,28 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { InsertTeachingPlan, insertTeachingPlanSchema } from "@shared/schema";
 import { useMutation } from "@tanstack/react-query";
-import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { getSuggestions, createSuggestionPrompt } from "@/lib/deepseek";
-import { 
-  Form, 
-  FormControl, 
-  FormDescription, 
-  FormField, 
-  FormItem, 
-  FormLabel, 
-  FormMessage 
+import { getAISuggestions } from "@/lib/deepseek";
+import { AISuggestions } from "./ai-suggestions";
+
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
 } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { format } from "date-fns";
 import { 
   Select, 
   SelectContent, 
@@ -23,394 +30,403 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import { Loader2, WandSparkles, Plus } from "lucide-react";
-import { 
-  Alert,
-  AlertTitle,
-  AlertDescription
-} from "@/components/ui/alert";
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
-} from "@/components/ui/card";
-import { 
-  insertTeachingPlanSchema, 
-  classOptions, 
-  planTypeOptions,
-  TeachingPlan
-} from "@shared/schema";
+import { CalendarIcon, Sparkles, Loader2 } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 
-// Create the form schema with validation
-const formSchema = insertTeachingPlanSchema.extend({
-  // Add client-side validation
-  title: z.string().min(3, { message: "Title must be at least 3 characters" }),
-  description: z.string().min(10, { message: "Description must be at least 10 characters" }),
-  activities: z.string().min(10, { message: "Activities must be at least 10 characters" }),
-  goals: z.string().min(10, { message: "Goals must be at least 10 characters" }),
-  startDate: z.string().refine((val) => !isNaN(Date.parse(val)), {
-    message: "Please enter a valid start date",
-  }),
-  endDate: z.string().refine((val) => !isNaN(Date.parse(val)), {
-    message: "Please enter a valid end date",
-  }),
-  type: z.enum(planTypeOptions),
-  class: z.enum(classOptions),
-  createdBy: z.number(),
-}).refine(
-  (data) => new Date(data.startDate) <= new Date(data.endDate),
-  {
-    message: "End date must be after start date",
-    path: ["endDate"],
-  }
-);
+// Extend the teaching plan schema for the form
+const planFormSchema = insertTeachingPlanSchema.extend({
+  startDate: z.date(),
+  endDate: z.date().refine(
+    (date) => date > new Date(), 
+    { message: "End date must be in the future" }
+  ),
+});
 
-type FormValues = z.infer<typeof formSchema>;
+type PlanFormValues = z.infer<typeof planFormSchema>;
 
 interface PlanFormProps {
-  plan?: TeachingPlan | null;
+  open: boolean;
   onClose: () => void;
+  editingPlan?: { id: number } & Partial<InsertTeachingPlan>;
 }
 
-export function PlanForm({ plan, onClose }: PlanFormProps) {
-  const { user } = useAuth();
+export function PlanForm({ open, onClose, editingPlan }: PlanFormProps) {
   const { toast } = useToast();
-  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
-  const [suggestions, setSuggestions] = useState<string | null>(null);
-
-  // Set default values based on existing plan or new plan
-  const defaultValues: Partial<FormValues> = plan
-    ? {
-        ...plan,
-        // Convert dates to string format for the form
-        startDate: new Date(plan.startDate).toISOString().split("T")[0],
-        endDate: new Date(plan.endDate).toISOString().split("T")[0],
-      }
-    : {
-        title: "",
-        description: "",
-        activities: "",
-        goals: "",
-        startDate: new Date().toISOString().split("T")[0],
-        endDate: new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split("T")[0],
-        type: "Weekly",
-        class: "Nursery",
-        createdBy: user?.id || 0,
-      };
-
-  // Initialize form
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues,
+  const [aiSuggestions, setAiSuggestions] = useState<string | null>(null);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  
+  // Form initialization
+  const form = useForm<PlanFormValues>({
+    resolver: zodResolver(planFormSchema),
+    defaultValues: {
+      type: editingPlan?.type || "Weekly",
+      class: editingPlan?.class || "Nursery",
+      title: editingPlan?.title || "",
+      description: editingPlan?.description || "",
+      activities: editingPlan?.activities || "",
+      goals: editingPlan?.goals || "",
+      startDate: editingPlan?.startDate ? new Date(editingPlan.startDate) : new Date(),
+      endDate: editingPlan?.endDate ? new Date(editingPlan.endDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Default to a week later
+    },
   });
-
-  // Create or update plan mutation
+  
+  // Update end date based on plan type when type changes
+  useEffect(() => {
+    const type = form.getValues("type");
+    const startDate = form.getValues("startDate");
+    let endDate = new Date(startDate);
+    
+    switch (type) {
+      case "Weekly":
+        endDate.setDate(startDate.getDate() + 7);
+        break;
+      case "Monthly":
+        endDate.setMonth(startDate.getMonth() + 1);
+        break;
+      case "Annual":
+        endDate.setFullYear(startDate.getFullYear() + 1);
+        break;
+    }
+    
+    if (!editingPlan) {
+      form.setValue("endDate", endDate);
+    }
+  }, [form.watch("type"), form.watch("startDate"), editingPlan, form]);
+  
+  // Create/update plan mutation
   const mutation = useMutation({
-    mutationFn: async (data: FormValues) => {
-      // Set the creator ID to the current user
-      data.createdBy = user?.id || 0;
-
-      // Create or update plan
-      if (plan) {
-        return apiRequest("PUT", `/api/plans/${plan.id}`, data);
+    mutationFn: async (values: PlanFormValues) => {
+      if (editingPlan?.id) {
+        return await apiRequest("PUT", `/api/teaching-plans/${editingPlan.id}`, values);
       } else {
-        return apiRequest("POST", "/api/plans", data);
+        return await apiRequest("POST", "/api/teaching-plans", values);
       }
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/teaching-plans'] });
       toast({
-        title: plan ? "Plan Updated" : "Plan Created",
-        description: plan
-          ? "The teaching plan has been updated successfully."
-          : "The teaching plan has been created successfully.",
+        title: editingPlan ? "Plan Updated" : "Plan Created",
+        description: `Teaching plan has been ${editingPlan ? "updated" : "created"} successfully.`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
       onClose();
     },
     onError: (error) => {
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "An error occurred",
+        description: error.message,
         variant: "destructive",
       });
     },
   });
-
-  // Handle form submission
-  const onSubmit = (data: FormValues) => {
-    mutation.mutate(data);
+  
+  const onSubmit = (values: PlanFormValues) => {
+    mutation.mutate(values);
   };
-
-  // Generate AI suggestions
-  const handleGenerateSuggestions = async () => {
-    setIsGeneratingSuggestions(true);
+  
+  const generateSuggestions = async () => {
+    setIsLoadingSuggestions(true);
+    setShowSuggestions(true);
+    
     try {
       const planType = form.getValues("type");
-      const classType = form.getValues("class");
-      const prompt = createSuggestionPrompt(planType, classType);
+      const planClass = form.getValues("class");
+      const prompt = `Generate 3-5 engaging ${planType.toLowerCase()} activities for ${planClass} students (age ${planClass === "Nursery" ? "3" : planClass === "LKG" ? "4" : "5"} years) that focus on social skills, pre-literacy, pre-numeracy, and motor skills development.`;
       
-      const response = await getSuggestions(prompt);
-      setSuggestions(response.response);
+      const suggestions = await getAISuggestions(prompt);
+      setAiSuggestions(suggestions);
     } catch (error) {
       toast({
-        title: "Failed to Generate Suggestions",
-        description: error instanceof Error ? error.message : "An error occurred while generating suggestions.",
+        title: "Error",
+        description: "Failed to generate AI suggestions. Please try again later.",
         variant: "destructive",
       });
+      console.error("AI suggestion error:", error);
+      setAiSuggestions("Unable to generate suggestions at this time. Please try again later.");
     } finally {
-      setIsGeneratingSuggestions(false);
+      setIsLoadingSuggestions(false);
     }
   };
-
-  // Add AI suggestions to activities
-  const handleAddSuggestions = () => {
-    if (!suggestions) return;
-    
+  
+  const appendSuggestions = (text: string) => {
     const currentActivities = form.getValues("activities");
     const updatedActivities = currentActivities 
-      ? `${currentActivities}\n\n${suggestions}` 
-      : suggestions;
+      ? `${currentActivities}\n\n${text}` 
+      : text;
     
     form.setValue("activities", updatedActivities);
-    setSuggestions(null);
-    
-    toast({
-      title: "Suggestions Added",
-      description: "AI suggestions have been added to your activities.",
-    });
+    setShowSuggestions(false);
   };
-
+  
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <FormField
-            control={form.control}
-            name="type"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Plan Type</FormLabel>
-                <Select
-                  onValueChange={field.onChange}
-                  defaultValue={field.value}
-                >
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{editingPlan ? "Edit Teaching Plan" : "Create New Teaching Plan"}</DialogTitle>
+        </DialogHeader>
+        
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Plan Type</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select plan type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="Weekly">Weekly</SelectItem>
+                        <SelectItem value="Monthly">Monthly</SelectItem>
+                        <SelectItem value="Annual">Annual</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="class"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Class</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select class" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="Nursery">Nursery</SelectItem>
+                        <SelectItem value="LKG">LKG</SelectItem>
+                        <SelectItem value="UKG">UKG</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            
+            <FormField
+              control={form.control}
+              name="title"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Plan Title</FormLabel>
                   <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select plan type" />
-                    </SelectTrigger>
+                    <Input placeholder="Enter plan title" {...field} />
                   </FormControl>
-                  <SelectContent>
-                    {planTypeOptions.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name="class"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Class</FormLabel>
-                <Select
-                  onValueChange={field.onChange}
-                  defaultValue={field.value}
-                >
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="startDate"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Start Date</FormLabel>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant={"outline"}
+                            className={cn(
+                              "w-full pl-3 text-left font-normal",
+                              !field.value && "text-muted-foreground"
+                            )}
+                          >
+                            {field.value ? (
+                              format(field.value, "PPP")
+                            ) : (
+                              <span>Pick a date</span>
+                            )}
+                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={field.value}
+                          onSelect={field.onChange}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="endDate"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>End Date</FormLabel>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant={"outline"}
+                            className={cn(
+                              "w-full pl-3 text-left font-normal",
+                              !field.value && "text-muted-foreground"
+                            )}
+                          >
+                            {field.value ? (
+                              format(field.value, "PPP")
+                            ) : (
+                              <span>Pick a date</span>
+                            )}
+                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={field.value}
+                          onSelect={field.onChange}
+                          disabled={(date) =>
+                            date < form.getValues("startDate")
+                          }
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            
+            <FormField
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Description</FormLabel>
                   <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select class" />
-                    </SelectTrigger>
+                    <Textarea 
+                      placeholder="Enter plan description" 
+                      className="h-24"
+                      {...field} 
+                    />
                   </FormControl>
-                  <SelectContent>
-                    {classOptions.map((classType) => (
-                      <SelectItem key={classType} value={classType}>
-                        {classType}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
+                  <FormDescription>
+                    Provide a brief overview of what this teaching plan aims to achieve.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            <FormField
+              control={form.control}
+              name="activities"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Activities</FormLabel>
+                  <FormControl>
+                    <Textarea 
+                      placeholder="List the activities planned" 
+                      className="h-32"
+                      {...field} 
+                    />
+                  </FormControl>
+                  <div className="flex justify-end mt-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={generateSuggestions}
+                      disabled={isLoadingSuggestions}
+                      className="bg-purple-600 text-white hover:bg-purple-700"
+                    >
+                      {isLoadingSuggestions ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="mr-2 h-4 w-4" />
+                      )}
+                      {isLoadingSuggestions ? "Generating..." : "Get Activity Suggestions"}
+                    </Button>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            {showSuggestions && (
+              <AISuggestions 
+                suggestions={aiSuggestions} 
+                isLoading={isLoadingSuggestions}
+                onAccept={appendSuggestions}
+                onClose={() => setShowSuggestions(false)}
+              />
             )}
-          />
-        </div>
-
-        <FormField
-          control={form.control}
-          name="title"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Plan Title</FormLabel>
-              <FormControl>
-                <Input placeholder="Enter plan title" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="description"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Description</FormLabel>
-              <FormControl>
-                <Textarea 
-                  placeholder="Enter plan description" 
-                  rows={3}
-                  {...field} 
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <FormField
-            control={form.control}
-            name="startDate"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Start Date</FormLabel>
-                <FormControl>
-                  <Input type="date" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name="endDate"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>End Date</FormLabel>
-                <FormControl>
-                  <Input type="date" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <FormField
-          control={form.control}
-          name="activities"
-          render={({ field }) => (
-            <FormItem>
-              <div className="flex justify-between items-center">
-                <FormLabel>Activities</FormLabel>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleGenerateSuggestions}
-                  disabled={isGeneratingSuggestions}
-                >
-                  {isGeneratingSuggestions ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <WandSparkles className="mr-2 h-4 w-4" />
-                      Get Activity Suggestions
-                    </>
-                  )}
-                </Button>
-              </div>
-              <FormControl>
-                <Textarea 
-                  placeholder="List the planned activities" 
-                  rows={4}
-                  {...field} 
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        {suggestions && (
-          <Card className="bg-purple-50 border-purple-200">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-purple-800">DeepSeek AI Suggestions</CardTitle>
-              <CardDescription>Here are some suggested activities based on your plan:</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm text-gray-700 whitespace-pre-line">
-                {suggestions}
-              </div>
-              <div className="flex justify-end mt-3">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  onClick={handleAddSuggestions}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add these to my plan
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        <FormField
-          control={form.control}
-          name="goals"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Learning Goals</FormLabel>
-              <FormControl>
-                <Textarea 
-                  placeholder="Describe the learning goals for this plan" 
-                  rows={3}
-                  {...field} 
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <div className="flex justify-end space-x-3">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onClose}
-            disabled={mutation.isPending}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {plan ? "Updating..." : "Creating..."}
-              </>
-            ) : (
-              <>{plan ? "Update" : "Save"} Plan</>
-            )}
-          </Button>
-        </div>
-      </form>
-    </Form>
+            
+            <FormField
+              control={form.control}
+              name="goals"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Learning Goals</FormLabel>
+                  <FormControl>
+                    <Textarea 
+                      placeholder="Enter learning goals" 
+                      className="h-24"
+                      {...field} 
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Outline the specific learning outcomes you aim to achieve with this plan.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+                disabled={mutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button 
+                type="submit" 
+                disabled={mutation.isPending}
+              >
+                {mutation.isPending ? 
+                  (editingPlan ? "Updating..." : "Creating...") : 
+                  (editingPlan ? "Update Plan" : "Create Plan")
+                }
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
   );
 }

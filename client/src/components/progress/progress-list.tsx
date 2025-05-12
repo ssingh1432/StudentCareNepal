@@ -1,115 +1,230 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Progress, Student } from "@shared/schema";
 import { useAuth } from "@/hooks/use-auth";
+import { ProgressForm } from "./progress-form";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
 import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
-} from "@/components/ui/table";
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuLabel, 
-  DropdownMenuSeparator, 
-  DropdownMenuTrigger 
-} from "@/components/ui/dropdown-menu";
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { 
-  MoreHorizontal, 
+  Search, 
+  ClipboardList, 
   Edit, 
-  Trash,
-  Eye
+  Trash2, 
+  Calendar,
+  PlusCircle 
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { 
-  Student,
-  ProgressEntry
-} from "@shared/schema";
 
-interface ProgressListProps {
-  progressEntries: ProgressEntry[];
-  students: Student[];
-  isLoading: boolean;
-  onEdit: (progress: ProgressEntry) => void;
-  onRefresh: () => void;
-}
-
-export function ProgressList({ progressEntries, students, isLoading, onEdit, onRefresh }: ProgressListProps) {
-  const { user } = useAuth();
+export function ProgressList() {
   const { toast } = useToast();
-  const [progressToDelete, setProgressToDelete] = useState<ProgressEntry | null>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [studentFilter, setStudentFilter] = useState<string>("all");
+  const [classFilter, setClassFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState<string>("");
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [showAddProgressForm, setShowAddProgressForm] = useState(false);
+  const [editingProgress, setEditingProgress] = useState<(Progress & { id: number }) | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [progressToDelete, setProgressToDelete] = useState<number | null>(null);
   
-  // Get student name by ID
-  const getStudentName = (studentId: number) => {
-    const student = students.find((s) => s.id === studentId);
-    return student ? student.name : "Unknown";
-  };
-
-  // Get student class by ID
-  const getStudentClass = (studentId: number) => {
-    const student = students.find((s) => s.id === studentId);
-    return student ? student.class : "Unknown";
-  };
-
-  // Get student photo by ID
-  const getStudentPhoto = (studentId: number) => {
-    const student = students.find((s) => s.id === studentId);
-    return student?.photoUrl || null;
-  };
-
-  // Handle progress deletion
-  const handleDelete = async (progress: ProgressEntry) => {
-    try {
-      await apiRequest("DELETE", `/api/progress/${progress.id}`);
+  // Fetch students for filtering
+  const { data: students } = useQuery<Student[]>({
+    queryKey: ['/api/students'],
+  });
+  
+  // Fetch progress entries
+  const { data: progressEntries, isLoading } = useQuery<Progress[]>({
+    queryKey: [
+      '/api/progress',
+      studentFilter !== "all" ? parseInt(studentFilter) : undefined,
+      classFilter !== "all" ? classFilter : undefined,
+    ],
+  });
+  
+  // Delete progress mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/progress/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/progress'] });
       toast({
         title: "Progress Entry Deleted",
-        description: "The progress entry has been deleted successfully.",
+        description: "The progress entry has been removed successfully.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
-      onRefresh();
-    } catch (error) {
+      setDeleteConfirmOpen(false);
+    },
+    onError: (error) => {
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to delete progress entry",
+        description: error.message,
         variant: "destructive",
       });
+    },
+  });
+  
+  // Filter progress entries
+  const filteredProgress = progressEntries?.filter(progress => {
+    if (dateFilter && new Date(progress.date).toISOString().split('T')[0] !== dateFilter) {
+      return false;
     }
+    
+    if (searchTerm) {
+      const student = students?.find(s => s.id === progress.studentId);
+      if (!student || !student.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+        return false;
+      }
+    }
+    
+    return true;
+  });
+  
+  // Function to get student name by ID
+  const getStudentName = (studentId: number): string => {
+    const student = students?.find(s => s.id === studentId);
+    return student ? student.name : "Unknown Student";
   };
-
-  // Get badge color based on progress rating
-  const getRatingColor = (rating: string) => {
+  
+  // Function to get student class by ID
+  const getStudentClass = (studentId: number): string => {
+    const student = students?.find(s => s.id === studentId);
+    return student ? student.class : "";
+  };
+  
+  // Function to get badge variant based on rating
+  const getRatingVariant = (rating: string): "excellent" | "good" | "needs-improvement" => {
     switch (rating) {
-      case "Excellent":
-        return "bg-green-100 text-green-800";
-      case "Good":
-        return "bg-yellow-100 text-yellow-800";
-      case "Needs Improvement":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
+      case "Excellent": return "excellent";
+      case "Good": return "good";
+      case "Needs Improvement": return "needs-improvement";
+      default: return "good";
     }
   };
-
+  
+  const handleEditProgress = (progress: Progress & { id: number }) => {
+    setEditingProgress(progress);
+  };
+  
+  const handleDeleteProgress = (id: number) => {
+    setProgressToDelete(id);
+    setDeleteConfirmOpen(true);
+  };
+  
+  const confirmDelete = () => {
+    if (progressToDelete) {
+      deleteMutation.mutate(progressToDelete);
+    }
+  };
+  
   return (
-    <>
-      <div className="bg-white shadow rounded-lg overflow-hidden">
+    <div>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">Progress Tracking</h2>
+        <Button onClick={() => setShowAddProgressForm(true)}>
+          <PlusCircle className="mr-2 h-4 w-4" />
+          Record Progress
+        </Button>
+      </div>
+      
+      {/* Filter controls */}
+      <div className="bg-white p-4 shadow rounded-lg mb-6">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <label htmlFor="student-filter" className="block text-sm font-medium text-gray-700 mb-1">Student</label>
+            <Select 
+              value={studentFilter} 
+              onValueChange={setStudentFilter}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All Students" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Students</SelectItem>
+                {students?.map(student => (
+                  <SelectItem key={student.id} value={student.id.toString()}>
+                    {student.name} ({student.class})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div>
+            <label htmlFor="class-filter-progress" className="block text-sm font-medium text-gray-700 mb-1">Class</label>
+            <Select 
+              value={classFilter} 
+              onValueChange={setClassFilter}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All Classes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Classes</SelectItem>
+                <SelectItem value="Nursery">Nursery</SelectItem>
+                <SelectItem value="LKG">LKG</SelectItem>
+                <SelectItem value="UKG">UKG</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div>
+            <label htmlFor="date-filter" className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+            <div className="relative">
+              <Calendar className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+              <Input 
+                id="date-filter"
+                type="date" 
+                className="pl-8"
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+              />
+            </div>
+          </div>
+          
+          <div className="sm:col-span-3">
+            <label htmlFor="search-filter" className="block text-sm font-medium text-gray-700 mb-1">Search by Student Name</label>
+            <div className="relative">
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+              <Input 
+                id="search-filter"
+                placeholder="Search by student name" 
+                className="pl-8"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Progress Entries Table */}
+      <div className="bg-white shadow rounded-lg overflow-hidden mb-6">
         <div className="px-6 py-4 border-b border-gray-200">
           <h3 className="text-lg font-medium text-gray-900">Progress Entries</h3>
         </div>
@@ -130,51 +245,28 @@ export function ProgressList({ progressEntries, students, isLoading, onEdit, onR
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                Array(5).fill(0).map((_, i) => (
-                  <TableRow key={i}>
-                    <TableCell>
-                      <div className="flex items-center">
-                        <Skeleton className="h-8 w-8 rounded-full" />
-                        <div className="ml-3">
-                          <Skeleton className="h-4 w-24 mb-1" />
-                          <Skeleton className="h-3 w-16" />
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-24 float-right" /></TableCell>
-                  </TableRow>
-                ))
-              ) : progressEntries.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-6 text-gray-500">
-                    No progress entries found. Add a new entry to get started.
+                  <TableCell colSpan={8} className="text-center py-10">
+                    <ClipboardList className="mx-auto h-12 w-12 text-gray-400 animate-pulse" />
+                    <p className="mt-2 text-gray-500">Loading progress entries...</p>
+                  </TableCell>
+                </TableRow>
+              ) : filteredProgress?.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-10">
+                    <ClipboardList className="mx-auto h-12 w-12 text-gray-400" />
+                    <p className="mt-2 text-gray-500">No progress entries found matching the filters.</p>
                   </TableCell>
                 </TableRow>
               ) : (
-                progressEntries.map((progress) => (
+                filteredProgress?.map(progress => (
                   <TableRow key={progress.id}>
                     <TableCell>
                       <div className="flex items-center">
-                        <div className="flex-shrink-0 h-8 w-8">
-                          {getStudentPhoto(progress.studentId) ? (
-                            <img
-                              className="h-8 w-8 rounded-full object-cover"
-                              src={getStudentPhoto(progress.studentId) || ""}
-                              alt={getStudentName(progress.studentId)}
-                            />
-                          ) : (
-                            <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center">
-                              <span className="text-purple-600 font-medium text-xs">
-                                {getStudentName(progress.studentId).charAt(0).toUpperCase()}
-                              </span>
-                            </div>
-                          )}
+                        <div className="flex-shrink-0 h-8 w-8 bg-purple-100 rounded-full flex items-center justify-center">
+                          <span className="text-purple-600 font-medium">
+                            {getStudentName(progress.studentId).charAt(0)}
+                          </span>
                         </div>
                         <div className="ml-3">
                           <div className="text-sm font-medium text-gray-900">
@@ -187,60 +279,52 @@ export function ProgressList({ progressEntries, students, isLoading, onEdit, onR
                       </div>
                     </TableCell>
                     <TableCell className="text-sm text-gray-500">
-                      {new Date(progress.date).toLocaleDateString()}
+                      {progress.date ? format(new Date(progress.date), "yyyy-MM-dd") : "N/A"}
                     </TableCell>
                     <TableCell>
-                      <Badge className={getRatingColor(progress.socialSkills)}>
+                      <Badge variant={getRatingVariant(progress.socialSkills)}>
                         {progress.socialSkills}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={getRatingColor(progress.preLiteracy)}>
+                      <Badge variant={getRatingVariant(progress.preLiteracy)}>
                         {progress.preLiteracy}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={getRatingColor(progress.preNumeracy)}>
+                      <Badge variant={getRatingVariant(progress.preNumeracy)}>
                         {progress.preNumeracy}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={getRatingColor(progress.motorSkills)}>
+                      <Badge variant={getRatingVariant(progress.motorSkills)}>
                         {progress.motorSkills}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={getRatingColor(progress.emotionalDevelopment)}>
+                      <Badge variant={getRatingVariant(progress.emotionalDevelopment)}>
                         {progress.emotionalDevelopment}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
-                            <MoreHorizontal className="h-4 w-4" />
-                            <span className="sr-only">Open menu</span>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuItem onClick={() => onEdit(progress)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem 
-                            onClick={() => {
-                              setProgressToDelete(progress);
-                              setDeleteDialogOpen(true);
-                            }}
-                            className="text-red-600"
-                          >
-                            <Trash className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                    <TableCell className="text-right whitespace-nowrap">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="text-indigo-600 hover:text-indigo-900"
+                        onClick={() => handleEditProgress(progress as Progress & { id: number })}
+                      >
+                        <Edit className="h-4 w-4 mr-1" />
+                        Edit
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="text-red-600 hover:text-red-900 ml-2"
+                        onClick={() => handleDeleteProgress(progress.id)}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Delete
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
@@ -249,32 +333,51 @@ export function ProgressList({ progressEntries, students, isLoading, onEdit, onR
           </Table>
         </div>
       </div>
-
+      
+      {/* Add progress form */}
+      {showAddProgressForm && (
+        <ProgressForm 
+          open={showAddProgressForm} 
+          onClose={() => setShowAddProgressForm(false)} 
+        />
+      )}
+      
+      {/* Edit progress form */}
+      {editingProgress && (
+        <ProgressForm 
+          open={!!editingProgress} 
+          onClose={() => setEditingProgress(null)} 
+          editingProgress={editingProgress}
+        />
+      )}
+      
       {/* Delete confirmation dialog */}
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete this progress entry for {progressToDelete ? getStudentName(progressToDelete.studentId) : "this student"}. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              className="bg-red-600 hover:bg-red-700"
-              onClick={() => {
-                if (progressToDelete) {
-                  handleDelete(progressToDelete);
-                  setProgressToDelete(null);
-                }
-              }}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Progress Entry</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this progress entry? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmOpen(false)}
+              disabled={deleteMutation.isPending}
             >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={confirmDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

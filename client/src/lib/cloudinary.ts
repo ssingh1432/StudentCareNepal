@@ -1,74 +1,105 @@
-// This file handles Cloudinary API integration
+import axios from "axios";
+import { apiRequest } from "./queryClient";
 
-// The Cloudinary API key will come from the environment variables
-const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-
-// Types for Cloudinary response
-export type CloudinaryUploadResponse = {
-  asset_id: string;
-  public_id: string;
-  version: number;
-  version_id: string;
-  signature: string;
+export interface CloudinaryUploadResult {
+  publicId: string;
+  url: string;
+  secureUrl: string;
+  format: string;
   width: number;
   height: number;
-  format: string;
-  resource_type: string;
-  created_at: string;
-  tags: string[];
-  bytes: number;
-  type: string;
-  etag: string;
-  placeholder: boolean;
-  url: string;
-  secure_url: string;
-  folder: string;
-  original_filename: string;
-};
+  resourceType: string;
+}
 
-// Function to upload an image to Cloudinary
-export const uploadImage = async (file: File): Promise<CloudinaryUploadResponse> => {
-  // Create form data for the upload
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET || 'students');
-  formData.append('folder', 'students');
+export interface CloudinarySignature {
+  signature: string;
+  timestamp: number;
+  cloudName: string;
+  apiKey: string;
+  folder: string;
+}
+
+export async function getCloudinarySignature(): Promise<CloudinarySignature> {
+  const response = await apiRequest("GET", "/api/protected/cloudinary-signature");
+  return await response.json();
+}
+
+export async function uploadToCloudinary(
+  file: File,
+  options?: {
+    maxSizeMB?: number;
+    folder?: string;
+    onProgress?: (progress: number) => void;
+  }
+): Promise<CloudinaryUploadResult> {
+  const maxSizeMB = options?.maxSizeMB || 1; // 1MB default
   
-  // Upload the image to Cloudinary
-  const response = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+  // Check file size
+  if (file.size > maxSizeMB * 1024 * 1024) {
+    throw new Error(`File size exceeds ${maxSizeMB}MB limit`);
+  }
+  
+  // Get upload signature
+  const { signature, timestamp, cloudName, apiKey, folder } = await getCloudinarySignature();
+  
+  // Create form data
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("api_key", apiKey);
+  formData.append("timestamp", timestamp.toString());
+  formData.append("signature", signature);
+  formData.append("folder", folder);
+  
+  // Upload to Cloudinary
+  const response = await axios.post(
+    `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`,
+    formData,
     {
-      method: 'POST',
-      body: formData,
+      onUploadProgress: (progressEvent) => {
+        if (options?.onProgress && progressEvent.total) {
+          const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          options.onProgress(progress);
+        }
+      },
     }
   );
   
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to upload image: ${errorText}`);
-  }
-  
-  return response.json();
-};
+  // Parse response
+  return {
+    publicId: response.data.public_id,
+    url: response.data.url,
+    secureUrl: response.data.secure_url,
+    format: response.data.format,
+    width: response.data.width,
+    height: response.data.height,
+    resourceType: response.data.resource_type,
+  };
+}
 
-// Function to delete an image from Cloudinary
-export const deleteImage = async (publicId: string): Promise<void> => {
-  // In a real application, this would call a backend endpoint
-  // that would make the Cloudinary delete API call with proper authentication
-  // We don't call Cloudinary directly from the frontend for deletion
-  // as it would require exposing the API secret
-  const response = await fetch(`/api/cloudinary/delete`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ publicId }),
-    credentials: 'include',
-  });
-  
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to delete image: ${errorText}`);
+// Helper to get optimized Cloudinary image URL with transformations
+export function getOptimizedImageUrl(
+  url: string,
+  options?: {
+    width?: number;
+    height?: number;
+    crop?: "fill" | "scale" | "fit" | "thumb";
+    quality?: number;
+    format?: "auto" | "jpg" | "png" | "webp";
   }
-};
+): string {
+  if (!url || !url.includes("cloudinary.com")) return url;
+  
+  const transformations = [] as string[];
+  
+  if (options?.width) transformations.push(`w_${options.width}`);
+  if (options?.height) transformations.push(`h_${options.height}`);
+  if (options?.crop) transformations.push(`c_${options.crop}`);
+  if (options?.quality) transformations.push(`q_${options.quality}`);
+  if (options?.format) transformations.push(`f_${options.format}`);
+  
+  if (transformations.length === 0) return url;
+  
+  // Insert transformations into URL
+  const transformationString = transformations.join(",");
+  return url.replace("/upload/", `/upload/${transformationString}/`);
+}

@@ -1,198 +1,157 @@
-import React, { useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { insertTeachingPlanSchema } from '@shared/schema';
-import { useAuth } from '@/hooks/use-auth';
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation } from "@tanstack/react-query";
+import { 
+  Plan, 
+  planValidationSchema, 
+  InsertPlan, 
+  classOptions,
+  planTypeOptions
+} from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { 
+} from "@/components/ui/form";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Loader2, Sparkles } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { apiRequest } from '@/lib/queryClient';
-import { getActivitySuggestions, generatePrompt } from '@/lib/deepseek';
-
-// Extend the schema for the form
-const planFormSchema = insertTeachingPlanSchema.extend({
-  createdBy: z.number().optional(),
-  activitySuggestion: z.string().optional(),
-});
+} from "@/components/ui/select";
+import { Loader2 } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import AISuggestions from "./AISuggestions";
 
 interface PlanFormProps {
-  initialData?: z.infer<typeof planFormSchema>;
-  onSuccess: () => void;
-  onCancel: () => void;
+  plan?: Plan;
+  onClose: () => void;
 }
 
-const PlanForm: React.FC<PlanFormProps> = ({
-  initialData,
-  onSuccess,
-  onCancel
-}) => {
+const PlanForm = ({ plan, onClose }: PlanFormProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isGeneratingSuggestion, setIsGeneratingSuggestion] = useState(false);
-  const [aiSuggestion, setAiSuggestion] = useState<string>('');
+  const [showAISuggestions, setShowAISuggestions] = useState(false);
   
-  const form = useForm<z.infer<typeof planFormSchema>>({
-    resolver: zodResolver(planFormSchema),
-    defaultValues: initialData || {
-      type: 'Weekly',
-      class: 'Nursery',
-      title: '',
-      description: '',
-      activities: '',
-      goals: '',
-      startDate: new Date().toISOString().split('T')[0],
-      endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 1 week from now
-      createdBy: user?.id,
+  const form = useForm<InsertPlan>({
+    resolver: zodResolver(planValidationSchema),
+    defaultValues: {
+      type: "weekly",
+      class: "nursery",
+      title: "",
+      description: "",
+      activities: "",
+      goals: "",
+      startDate: new Date().toISOString(),
+      endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // Default to 1 week from now
+      teacherId: user?.id || 0,
     },
   });
-
-  // Helper to update the end date based on plan type and start date
-  const updateEndDate = (startDate: string, planType: string) => {
-    const start = new Date(startDate);
-    let end: Date;
-    
-    switch(planType) {
-      case 'Annual':
-        end = new Date(start);
-        end.setFullYear(start.getFullYear() + 1);
-        end.setDate(end.getDate() - 1);
-        break;
-      case 'Monthly':
-        end = new Date(start);
-        end.setMonth(end.getMonth() + 1);
-        end.setDate(end.getDate() - 1);
-        break;
-      case 'Weekly':
-      default:
-        end = new Date(start);
-        end.setDate(start.getDate() + 7);
-        break;
-    }
-    
-    form.setValue('endDate', end.toISOString().split('T')[0]);
-  };
-
-  // Generate AI suggestions
-  const generateSuggestions = async () => {
-    const planType = form.getValues('type');
-    const className = form.getValues('class');
-    
-    if (!className) {
-      toast({
-        title: 'Missing information',
-        description: 'Please select a class before generating suggestions',
-        variant: 'destructive',
+  
+  // Set form values when editing an existing plan
+  useEffect(() => {
+    if (plan) {
+      form.reset({
+        type: plan.type,
+        class: plan.class,
+        title: plan.title,
+        description: plan.description,
+        activities: plan.activities,
+        goals: plan.goals,
+        startDate: new Date(plan.startDate).toISOString(),
+        endDate: new Date(plan.endDate).toISOString(),
+        teacherId: plan.teacherId,
       });
-      return;
     }
-    
-    setIsGeneratingSuggestion(true);
-    try {
-      const prompt = generatePrompt(
-        className,
-        planType === 'Weekly' ? 'short-term' : planType === 'Monthly' ? 'medium-term' : 'long-term',
-        5
-      );
-      
-      const result = await getActivitySuggestions(prompt);
-      setAiSuggestion(result.suggestions);
-    } catch (error) {
-      console.error('Error generating suggestions:', error);
-      toast({
-        title: 'Failed to generate suggestions',
-        description: error instanceof Error ? error.message : 'An unknown error occurred',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsGeneratingSuggestion(false);
-    }
-  };
-
-  // Add AI suggestions to the activities field
-  const addSuggestionsToActivities = () => {
-    const currentActivities = form.getValues('activities');
-    const updatedActivities = currentActivities 
-      ? `${currentActivities}\n\n${aiSuggestion}`
-      : aiSuggestion;
-    
-    form.setValue('activities', updatedActivities);
-    setAiSuggestion('');
-  };
-
-  const onSubmit = async (values: z.infer<typeof planFormSchema>) => {
-    setIsSubmitting(true);
-    try {
-      // Add current user ID
-      values.createdBy = user?.id;
-      
-      // Remove any non-schema fields
-      const { activitySuggestion, ...planData } = values;
-      
-      const endpoint = initialData ? `/api/plans/${initialData.id}` : '/api/plans';
-      const method = initialData ? 'PUT' : 'POST';
-      
-      const response = await apiRequest(method, endpoint, planData);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to save teaching plan');
+  }, [plan, form]);
+  
+  // Create or update plan mutation
+  const mutation = useMutation({
+    mutationFn: async (data: InsertPlan) => {
+      if (plan) {
+        // Update existing plan
+        await apiRequest("PUT", `/api/plans/${plan.id}`, data);
+      } else {
+        // Create new plan
+        await apiRequest("POST", "/api/plans", data);
       }
-      
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
       toast({
-        title: `Teaching plan ${initialData ? 'updated' : 'created'} successfully`,
-        description: `${values.title} has been ${initialData ? 'updated' : 'created'}.`,
+        title: plan ? "Plan updated" : "Plan created",
+        description: plan
+          ? `${form.getValues("title")} has been updated successfully.`
+          : `${form.getValues("title")} has been created successfully.`,
       });
-      
-      onSuccess();
-    } catch (error) {
-      console.error('Error saving teaching plan:', error);
+      onClose();
+    },
+    onError: (error: Error) => {
       toast({
-        title: `Failed to ${initialData ? 'update' : 'create'} teaching plan`,
-        description: error instanceof Error ? error.message : 'An unknown error occurred',
-        variant: 'destructive',
+        title: plan ? "Failed to update plan" : "Failed to create plan",
+        description: error.message,
+        variant: "destructive",
       });
-    } finally {
-      setIsSubmitting(false);
+    },
+  });
+  
+  const onSubmit = (data: InsertPlan) => {
+    // Ensure teacherId is set to the current user if not specified
+    if (!data.teacherId && user) {
+      data.teacherId = user.id;
     }
+    
+    mutation.mutate(data);
   };
-
+  
+  // Helper to format date to YYYY-MM-DD for input
+  const formatDateForInput = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toISOString().split('T')[0];
+  };
+  
+  // Handle AI suggestion addition
+  const handleAddSuggestions = (suggestions: string) => {
+    const currentActivities = form.getValues("activities");
+    
+    if (currentActivities) {
+      form.setValue("activities", `${currentActivities}\n\n${suggestions}`);
+    } else {
+      form.setValue("activities", suggestions);
+    }
+    
+    setShowAISuggestions(false);
+    
+    toast({
+      title: "Suggestions added",
+      description: "AI-generated suggestions have been added to your activities.",
+    });
+  };
+  
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           <FormField
             control={form.control}
             name="type"
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Plan Type</FormLabel>
-                <Select
-                  onValueChange={(value) => {
-                    field.onChange(value);
-                    updateEndDate(form.getValues('startDate'), value);
-                  }}
+                <Select 
+                  onValueChange={field.onChange} 
                   defaultValue={field.value}
+                  value={field.value}
                 >
                   <FormControl>
                     <SelectTrigger>
@@ -200,9 +159,11 @@ const PlanForm: React.FC<PlanFormProps> = ({
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="Weekly">Weekly</SelectItem>
-                    <SelectItem value="Monthly">Monthly</SelectItem>
-                    <SelectItem value="Annual">Annual</SelectItem>
+                    {planTypeOptions.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <FormMessage />
@@ -216,9 +177,10 @@ const PlanForm: React.FC<PlanFormProps> = ({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Class</FormLabel>
-                <Select
-                  onValueChange={field.onChange}
+                <Select 
+                  onValueChange={field.onChange} 
                   defaultValue={field.value}
+                  value={field.value}
                 >
                   <FormControl>
                     <SelectTrigger>
@@ -226,50 +188,51 @@ const PlanForm: React.FC<PlanFormProps> = ({
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value="Nursery">Nursery</SelectItem>
-                    <SelectItem value="LKG">LKG</SelectItem>
-                    <SelectItem value="UKG">UKG</SelectItem>
+                    {classOptions.map((classOption) => (
+                      <SelectItem key={classOption} value={classOption}>
+                        {classOption.toUpperCase()}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <FormMessage />
               </FormItem>
             )}
           />
-        </div>
-        
-        <FormField
-          control={form.control}
-          name="title"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Plan Title</FormLabel>
-              <FormControl>
-                <Input placeholder="Enter a title for this plan" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        
-        <FormField
-          control={form.control}
-          name="description"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Description</FormLabel>
-              <FormControl>
-                <Textarea
-                  placeholder="Brief description of the teaching plan"
-                  className="min-h-[80px]"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <FormField
+            control={form.control}
+            name="title"
+            render={({ field }) => (
+              <FormItem className="sm:col-span-2">
+                <FormLabel>Plan Title</FormLabel>
+                <FormControl>
+                  <Input placeholder="Enter plan title" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          
+          <FormField
+            control={form.control}
+            name="description"
+            render={({ field }) => (
+              <FormItem className="sm:col-span-2">
+                <FormLabel>Description</FormLabel>
+                <FormControl>
+                  <Textarea 
+                    placeholder="Enter plan description"
+                    className="resize-none"
+                    rows={3}
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          
           <FormField
             control={form.control}
             name="startDate"
@@ -277,13 +240,13 @@ const PlanForm: React.FC<PlanFormProps> = ({
               <FormItem>
                 <FormLabel>Start Date</FormLabel>
                 <FormControl>
-                  <input
-                    type="date"
+                  <input 
+                    type="date" 
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    {...field}
+                    value={formatDateForInput(field.value)}
                     onChange={(e) => {
-                      field.onChange(e);
-                      updateEndDate(e.target.value, form.getValues('type'));
+                      const newDate = new Date(e.target.value);
+                      field.onChange(newDate.toISOString());
                     }}
                   />
                 </FormControl>
@@ -299,9 +262,75 @@ const PlanForm: React.FC<PlanFormProps> = ({
               <FormItem>
                 <FormLabel>End Date</FormLabel>
                 <FormControl>
-                  <input
-                    type="date"
+                  <input 
+                    type="date" 
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={formatDateForInput(field.value)}
+                    onChange={(e) => {
+                      const newDate = new Date(e.target.value);
+                      field.onChange(newDate.toISOString());
+                    }}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          
+          <FormField
+            control={form.control}
+            name="activities"
+            render={({ field }) => (
+              <FormItem className="sm:col-span-2">
+                <FormLabel>Activities</FormLabel>
+                <FormControl>
+                  <Textarea 
+                    placeholder="List the activities planned"
+                    className="resize-none"
+                    rows={4}
+                    {...field}
+                  />
+                </FormControl>
+                <div className="mt-2 flex justify-end">
+                  <Button 
+                    type="button" 
+                    variant="outline"
+                    onClick={() => setShowAISuggestions(true)}
+                    className="text-purple-600 border-purple-600 hover:bg-purple-50"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+                    </svg>
+                    Get Activity Suggestions
+                  </Button>
+                </div>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          
+          {showAISuggestions && (
+            <div className="sm:col-span-2">
+              <AISuggestions 
+                planType={form.getValues("type")}
+                classLevel={form.getValues("class")}
+                onAddSuggestions={handleAddSuggestions}
+                onCancel={() => setShowAISuggestions(false)}
+              />
+            </div>
+          )}
+          
+          <FormField
+            control={form.control}
+            name="goals"
+            render={({ field }) => (
+              <FormItem className="sm:col-span-2">
+                <FormLabel>Learning Goals</FormLabel>
+                <FormControl>
+                  <Textarea 
+                    placeholder="Enter learning goals"
+                    className="resize-none"
+                    rows={3}
                     {...field}
                   />
                 </FormControl>
@@ -311,109 +340,17 @@ const PlanForm: React.FC<PlanFormProps> = ({
           />
         </div>
         
-        <FormField
-          control={form.control}
-          name="activities"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Activities</FormLabel>
-              <FormControl>
-                <div className="space-y-2">
-                  <Textarea
-                    placeholder="List the activities for this plan"
-                    className="min-h-[120px]"
-                    {...field}
-                  />
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={generateSuggestions}
-                      disabled={isGeneratingSuggestion}
-                    >
-                      {isGeneratingSuggestion ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Generating...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="mr-2 h-4 w-4" />
-                          Get AI Suggestions
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </FormControl>
-              <FormDescription>
-                List the activities to be conducted as part of this plan
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        
-        {aiSuggestion && (
-          <Alert className="bg-purple-50 border-purple-200">
-            <Sparkles className="h-4 w-4 text-purple-500" />
-            <AlertTitle>AI Suggestions</AlertTitle>
-            <AlertDescription className="mt-2">
-              <div className="whitespace-pre-line bg-white p-3 rounded border border-purple-100 text-sm mb-2">
-                {aiSuggestion}
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                onClick={addSuggestionsToActivities}
-              >
-                Add to Activities
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-        
-        <FormField
-          control={form.control}
-          name="goals"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Learning Goals</FormLabel>
-              <FormControl>
-                <Textarea
-                  placeholder="Outline the learning goals for this plan"
-                  className="min-h-[80px]"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        
-        <div className="flex justify-end space-x-4">
-          <Button 
-            type="button" 
-            variant="outline" 
-            onClick={onCancel}
-            disabled={isSubmitting}
-          >
+        <div className="flex justify-end space-x-3">
+          <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button 
-            type="submit"
-            disabled={isSubmitting}
+            type="submit" 
+            disabled={mutation.isPending}
+            className="bg-purple-600 hover:bg-purple-700"
           >
-            {isSubmitting ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Saving...
-              </>
-            ) : initialData ? 'Update Plan' : 'Save Plan'}
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {plan ? "Update Plan" : "Save Plan"}
           </Button>
         </div>
       </form>

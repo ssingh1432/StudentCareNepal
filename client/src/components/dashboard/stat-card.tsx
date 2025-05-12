@@ -1,30 +1,53 @@
 import { ReactNode } from "react";
-import { Card, CardContent } from "@/components/ui/card";
 
 interface StatCardProps {
   title: string;
-  value: string | number;
+  value: number | string;
   icon: ReactNode;
-  iconBg: string;
-  iconColor: string;
+  iconBgColor?: string;
+  iconColor?: string;
+  linkText?: string;
+  linkHref?: string;
 }
 
-export function StatCard({ title, value, icon, iconBg, iconColor }: StatCardProps) {
+export function StatCard({
+  title,
+  value,
+  icon,
+  iconBgColor = "bg-purple-100",
+  iconColor = "text-purple-600",
+  linkText,
+  linkHref,
+}: StatCardProps) {
   return (
-    <Card>
-      <CardContent className="p-6">
+    <div className="bg-white overflow-hidden shadow rounded-lg">
+      <div className="px-4 py-5 sm:p-6">
         <div className="flex items-center">
-          <div className={`flex-shrink-0 ${iconBg} rounded-md p-3`}>
-            <div className={`h-6 w-6 ${iconColor}`}>{icon}</div>
+          <div className={`flex-shrink-0 rounded-md p-3 ${iconBgColor}`}>
+            <div className={iconColor}>{icon}</div>
           </div>
           <div className="ml-5 w-0 flex-1">
-            <dt className="text-sm font-medium text-gray-500 truncate">{title}</dt>
-            <dd className="flex items-baseline">
-              <div className="text-2xl font-semibold text-gray-900">{value}</div>
-            </dd>
+            <dl>
+              <dt className="text-sm font-medium text-gray-500 truncate">{title}</dt>
+              <dd className="flex items-baseline">
+                <div className="text-2xl font-semibold text-gray-900">
+                  {value}
+                </div>
+              </dd>
+            </dl>
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+      
+      {linkText && linkHref && (
+        <div className="bg-gray-50 px-4 py-4 sm:px-6">
+          <div className="text-sm">
+            <a href={linkHref} className="font-medium text-purple-600 hover:text-purple-900">
+              {linkText}
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

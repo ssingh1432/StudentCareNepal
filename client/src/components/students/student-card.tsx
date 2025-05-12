@@ -1,172 +1,185 @@
+import { useState } from "react";
+import { Student } from "@shared/schema";
+import { useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { Link } from "wouter";
-import { 
-  Card, 
-  CardContent, 
-  CardFooter, 
-  CardHeader 
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuTrigger 
-} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { 
-  ChartBar, 
-  Edit, 
-  MoreVertical, 
-  Trash,
-  Users
-} from "lucide-react";
-import { Student } from "@shared/schema";
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle,
+  DialogDescription, 
+  DialogFooter 
+} from "@/components/ui/dialog";
+import { Edit, Trash2, User, ClipboardList, PlusCircle } from "lucide-react";
 
 interface StudentCardProps {
   student: Student;
-  teacherName?: string;
   onEdit: () => void;
-  onDelete: () => void;
 }
 
-export function StudentCard({ student, teacherName, onEdit, onDelete }: StudentCardProps) {
-  // Get badge color based on learning ability
-  const getLearningAbilityColor = (ability: string) => {
-    switch (ability) {
-      case "Talented":
-        return "bg-green-100 text-green-800";
-      case "Average":
-        return "bg-yellow-100 text-yellow-800";
-      case "Slow Learner":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
+export function StudentCard({ student, onEdit }: StudentCardProps) {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  
+  // Delete student mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/students/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/students'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/dashboard/stats'] });
+      toast({
+        title: "Student Deleted",
+        description: "Student has been removed from the system.",
+      });
+      setDeleteConfirmOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+  
+  const handleDelete = () => {
+    deleteMutation.mutate(student.id);
+  };
+  
+  const getClassVariant = (className: string) => {
+    switch(className) {
+      case "Nursery": return "nursery";
+      case "LKG": return "lkg";
+      case "UKG": return "ukg";
+      default: return "default";
     }
   };
-
-  // Get badge color based on writing speed
-  const getWritingSpeedColor = (speed: string) => {
-    switch (speed) {
-      case "Speed Writing":
-        return "bg-blue-100 text-blue-800";
-      case "Slow Writing":
-        return "bg-yellow-100 text-yellow-800";
-      case "N/A":
-        return "bg-gray-100 text-gray-800";
-      default:
-        return "bg-gray-100 text-gray-800";
+  
+  const getAbilityVariant = (ability: string) => {
+    switch(ability) {
+      case "Talented": return "talented";
+      case "Average": return "average";
+      case "Slow Learner": return "slow-learner";
+      default: return "default";
     }
   };
-
-  // Get badge color based on class
-  const getClassColor = (cls: string) => {
-    switch (cls) {
-      case "Nursery":
-        return "bg-purple-100 text-purple-800";
-      case "LKG":
-        return "bg-blue-100 text-blue-800";
-      case "UKG":
-        return "bg-green-100 text-green-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
+  
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="flex justify-between items-center p-4 border-b bg-gray-50">
-        <div>
-          <Badge className={getClassColor(student.class)}>
-            {student.class}
-          </Badge>
-          <h3 className="mt-1 text-lg font-semibold text-gray-900">{student.name}</h3>
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm">
-              <MoreVertical className="h-4 w-4" />
+    <>
+      <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden flex flex-col">
+        <div className="flex justify-between items-center p-4 border-b border-gray-200 bg-purple-50">
+          <div>
+            <Badge variant={getClassVariant(student.class)}>
+              {student.class}
+            </Badge>
+            <h3 className="mt-1 text-lg font-semibold text-gray-900">{student.name}</h3>
+          </div>
+          <div className="flex">
+            <Button variant="ghost" size="sm" onClick={onEdit}>
+              <Edit className="h-4 w-4 text-gray-500" />
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={onEdit}>
-              <Edit className="mr-2 h-4 w-4" />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem 
-              onClick={onDelete}
-              className="text-red-600"
-            >
-              <Trash className="mr-2 h-4 w-4" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </CardHeader>
-
-      <CardContent className="p-0 flex">
-        <div className="w-1/3 bg-gray-50 flex items-center justify-center p-4">
-          {student.photoUrl ? (
-            <img 
-              src={student.photoUrl} 
-              alt={student.name}
-              className="h-24 w-24 rounded-full object-cover border-2 border-white shadow" 
-            />
-          ) : (
-            <div className="h-24 w-24 rounded-full bg-purple-100 flex items-center justify-center border-2 border-white shadow">
-              <span className="text-purple-600 text-2xl font-medium">
-                {student.name.charAt(0).toUpperCase()}
-              </span>
-            </div>
-          )}
+            <Button variant="ghost" size="sm" onClick={() => setDeleteConfirmOpen(true)}>
+              <Trash2 className="h-4 w-4 text-gray-500" />
+            </Button>
+          </div>
         </div>
-        <div className="w-2/3 p-4">
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div>
-              <p className="text-gray-500">Age</p>
-              <p className="font-medium">{student.age} years</p>
-            </div>
-            <div>
-              <p className="text-gray-500">Learning Ability</p>
-              <Badge className={getLearningAbilityColor(student.learningAbility)}>
-                {student.learningAbility}
-              </Badge>
-            </div>
-            <div>
-              <p className="text-gray-500">Writing Speed</p>
-              <Badge className={getWritingSpeedColor(student.writingSpeed || "N/A")}>
-                {student.writingSpeed || "N/A"}
-              </Badge>
-            </div>
-            {teacherName && (
-              <div>
-                <p className="text-gray-500">Teacher</p>
-                <p className="font-medium">{teacherName}</p>
+        
+        <div className="flex-1 flex">
+          <div className="w-1/3 bg-purple-50 flex items-center justify-center p-2">
+            {student.photoUrl ? (
+              <img 
+                src={student.photoUrl} 
+                alt={student.name} 
+                className="h-24 w-24 rounded-full object-cover border-2 border-white shadow"
+              />
+            ) : (
+              <div className="h-24 w-24 rounded-full bg-gray-200 flex items-center justify-center">
+                <User className="h-12 w-12 text-gray-400" />
               </div>
             )}
           </div>
-          {student.notes && (
-            <div className="mt-2">
-              <p className="text-gray-500">Notes</p>
-              <p className="text-sm text-gray-700 line-clamp-2">{student.notes}</p>
+          
+          <div className="w-2/3 p-4">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div>
+                <p className="text-gray-500">Age</p>
+                <p className="font-medium">{student.age} years</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Learning Ability</p>
+                <Badge variant={getAbilityVariant(student.learningAbility)}>
+                  {student.learningAbility}
+                </Badge>
+              </div>
+              <div>
+                <p className="text-gray-500">Writing Speed</p>
+                <p className="font-medium">{student.writingSpeed}</p>
+              </div>
+              
+              {student.teacherId && (
+                <div>
+                  <p className="text-gray-500">Teacher</p>
+                  <p className="font-medium">
+                    {student.teacherId === user?.id ? "You" : "Assigned"}
+                  </p>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
-      </CardContent>
-
-      <CardFooter className="bg-gray-50 px-4 py-3 border-t flex justify-between">
-        <Link href={`/progress?studentId=${student.id}`}>
-          <Button variant="outline" size="sm" className="text-xs text-purple-600 hover:text-purple-700">
-            <Users className="mr-1 h-3 w-3" />
-            View Profile
-          </Button>
-        </Link>
-        <Link href={`/progress?action=add&studentId=${student.id}`}>
-          <Button variant="outline" size="sm" className="text-xs text-purple-600 hover:text-purple-700">
-            <ChartBar className="mr-1 h-3 w-3" />
-            Add Progress
-          </Button>
-        </Link>
-      </CardFooter>
-    </Card>
+        
+        <div className="bg-gray-50 px-4 py-3 border-t border-gray-200 flex justify-between">
+          <Link href={`/progress?studentId=${student.id}`}>
+            <Button variant="link" size="sm" className="text-xs text-purple-600 hover:text-purple-500 p-0">
+              <ClipboardList className="h-3 w-3 mr-1" />
+              View Progress
+            </Button>
+          </Link>
+          
+          <Link href={`/progress/new?studentId=${student.id}`}>
+            <Button variant="link" size="sm" className="text-xs text-purple-600 hover:text-purple-500 p-0">
+              <PlusCircle className="h-3 w-3 mr-1" />
+              Add Progress Entry
+            </Button>
+          </Link>
+        </div>
+      </div>
+      
+      {/* Delete confirmation dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Student</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete {student.name}? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmOpen(false)}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

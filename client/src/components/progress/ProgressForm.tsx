@@ -1,138 +1,187 @@
-import React, { useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { insertProgressEntrySchema } from '@shared/schema';
-import { useAuth } from '@/hooks/use-auth';
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { 
+  Progress, 
+  progressValidationSchema, 
+  InsertProgress, 
+  Student,
+  progressRatingOptions
+} from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { 
+} from "@/components/ui/form";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { useToast } from '@/hooks/use-toast';
-import { apiRequest } from '@/lib/queryClient';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { getInitials } from '@/lib/utils';
-import { DEFAULT_AVATAR_URL } from '@/lib/cloudinary';
-
-// Extend insertProgressEntrySchema for form validation
-const progressFormSchema = insertProgressEntrySchema.extend({
-  createdBy: z.number().optional(),
-});
+} from "@/components/ui/select";
+import { Loader2 } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 
 interface ProgressFormProps {
-  student: {
-    id: number;
-    name: string;
-    class: string;
-    photoUrl?: string;
-  };
-  initialData?: z.infer<typeof progressFormSchema>;
-  onSuccess: () => void;
-  onCancel: () => void;
+  progress?: Progress;
+  student?: Student;
+  onClose: () => void;
 }
 
-const ProgressForm: React.FC<ProgressFormProps> = ({
-  student,
-  initialData,
-  onSuccess,
-  onCancel
-}) => {
+const ProgressForm = ({ progress, student, onClose }: ProgressFormProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isAdmin = user?.role === "admin";
   
-  const form = useForm<z.infer<typeof progressFormSchema>>({
-    resolver: zodResolver(progressFormSchema),
-    defaultValues: initialData || {
-      studentId: student.id,
-      date: new Date().toISOString().split('T')[0],
-      socialSkills: 'Good',
-      preLiteracy: 'Good',
-      preNumeracy: 'Good',
-      motorSkills: 'Good',
-      emotionalDevelopment: 'Good',
-      comments: '',
-      createdBy: user?.id,
+  const form = useForm<InsertProgress>({
+    resolver: zodResolver(progressValidationSchema),
+    defaultValues: {
+      studentId: student?.id || 0,
+      date: new Date().toISOString(),
+      socialSkills: "good",
+      preLiteracy: "good",
+      preNumeracy: "good",
+      motorSkills: "good",
+      emotionalDevelopment: "good",
+      comments: "",
     },
   });
-
-  const onSubmit = async (values: z.infer<typeof progressFormSchema>) => {
-    setIsSubmitting(true);
-    try {
-      // Add current user ID
-      values.createdBy = user?.id;
-      
-      const endpoint = initialData ? `/api/progress/${initialData.id}` : '/api/progress';
-      const method = initialData ? 'PUT' : 'POST';
-      
-      const response = await apiRequest(method, endpoint, values);
+  
+  // Fetch students if needed (for admin to select)
+  const { data: students } = useQuery<Student[]>({
+    queryKey: ["/api/students"],
+    queryFn: async () => {
+      const response = await fetch("/api/students", {
+        credentials: "include",
+      });
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to save progress entry');
+        throw new Error("Failed to fetch students");
       }
       
-      toast({
-        title: `Progress entry ${initialData ? 'updated' : 'created'} successfully`,
-        description: `Progress for ${student.name} has been ${initialData ? 'updated' : 'recorded'}.`,
+      return response.json();
+    },
+    enabled: isAdmin && !student, // Only fetch if admin and no student provided
+  });
+  
+  // Set form values when editing existing progress
+  useEffect(() => {
+    if (progress) {
+      form.reset({
+        studentId: progress.studentId,
+        date: new Date(progress.date).toISOString(),
+        socialSkills: progress.socialSkills,
+        preLiteracy: progress.preLiteracy,
+        preNumeracy: progress.preNumeracy,
+        motorSkills: progress.motorSkills,
+        emotionalDevelopment: progress.emotionalDevelopment,
+        comments: progress.comments || "",
       });
-      
-      onSuccess();
-    } catch (error) {
-      console.error('Error saving progress entry:', error);
-      toast({
-        title: `Failed to ${initialData ? 'update' : 'create'} progress entry`,
-        description: error instanceof Error ? error.message : 'An unknown error occurred',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSubmitting(false);
+    } else if (student) {
+      form.setValue("studentId", student.id);
     }
+  }, [progress, student, form]);
+  
+  // Create or update progress mutation
+  const mutation = useMutation({
+    mutationFn: async (data: InsertProgress) => {
+      if (progress) {
+        // Update existing progress
+        await apiRequest("PUT", `/api/progress/${progress.id}`, data);
+      } else {
+        // Create new progress
+        await apiRequest("POST", "/api/progress", data);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/progress"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/students", form.getValues("studentId"), "progress"] });
+      toast({
+        title: progress ? "Progress updated" : "Progress recorded",
+        description: progress
+          ? "Progress entry has been updated successfully."
+          : "Progress has been recorded successfully.",
+      });
+      onClose();
+    },
+    onError: (error: Error) => {
+      toast({
+        title: progress ? "Failed to update progress" : "Failed to record progress",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+  
+  const onSubmit = (data: InsertProgress) => {
+    mutation.mutate(data);
   };
-
+  
+  // Helper to format date to YYYY-MM-DD for input
+  const formatDateForInput = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toISOString().split('T')[0];
+  };
+  
   return (
-    <div>
-      {/* Student info */}
-      <div className="flex items-center mb-6 p-4 bg-purple-50 rounded-lg">
-        <Avatar className="h-12 w-12 mr-4">
-          <AvatarImage src={student.photoUrl || DEFAULT_AVATAR_URL} alt={student.name} />
-          <AvatarFallback className="bg-purple-100 text-purple-600">
-            {getInitials(student.name)}
-          </AvatarFallback>
-        </Avatar>
-        <div>
-          <h3 className="text-lg font-semibold">{student.name}</h3>
-          <p className="text-sm text-gray-500">Class: {student.class}</p>
-        </div>
-      </div>
-      
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+          {isAdmin && !student && (
+            <FormField
+              control={form.control}
+              name="studentId"
+              render={({ field }) => (
+                <FormItem className="sm:col-span-2">
+                  <FormLabel>Student</FormLabel>
+                  <Select 
+                    onValueChange={(value) => field.onChange(parseInt(value))} 
+                    defaultValue={field.value.toString()} 
+                    value={field.value.toString()}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a student" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {students?.map((student) => (
+                        <SelectItem key={student.id} value={student.id.toString()}>
+                          {student.name} ({student.class.toUpperCase()})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+          
           <FormField
             control={form.control}
             name="date"
             render={({ field }) => (
-              <FormItem>
+              <FormItem className="sm:col-span-2">
                 <FormLabel>Date</FormLabel>
                 <FormControl>
-                  <input
-                    type="date"
+                  <input 
+                    type="date" 
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    {...field}
+                    value={formatDateForInput(field.value)}
+                    onChange={(e) => {
+                      const newDate = new Date(e.target.value);
+                      field.onChange(newDate.toISOString());
+                    }}
                   />
                 </FormControl>
                 <FormMessage />
@@ -140,169 +189,186 @@ const ProgressForm: React.FC<ProgressFormProps> = ({
             )}
           />
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <FormField
-              control={form.control}
-              name="socialSkills"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Social Skills</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select rating" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="preLiteracy"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Pre-Literacy</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select rating" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="preNumeracy"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Pre-Numeracy</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select rating" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="motorSkills"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Motor Skills</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select rating" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="emotionalDevelopment"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Emotional Development</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select rating" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="comments"
-              render={({ field }) => (
-                <FormItem className="md:col-span-2">
-                  <FormLabel>Comments (Optional)</FormLabel>
+          <FormField
+            control={form.control}
+            name="socialSkills"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Social Skills</FormLabel>
+                <Select 
+                  onValueChange={field.onChange} 
+                  defaultValue={field.value} 
+                  value={field.value}
+                >
                   <FormControl>
-                    <Textarea 
-                      placeholder="Add any additional comments or observations"
-                      className="resize-none"
-                      rows={4}
-                      {...field}
-                    />
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select rating" />
+                    </SelectTrigger>
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+                  <SelectContent>
+                    {progressRatingOptions.map((rating) => (
+                      <SelectItem key={rating} value={rating}>
+                        {rating.charAt(0).toUpperCase() + rating.slice(1)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
           
-          <div className="flex justify-end space-x-4">
-            <Button 
-              type="button" 
-              variant="outline" 
-              onClick={onCancel}
-              disabled={isSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button 
-              type="submit"
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Saving...
-                </>
-              ) : initialData ? 'Update Progress' : 'Save Progress'}
-            </Button>
-          </div>
-        </form>
-      </Form>
-    </div>
+          <FormField
+            control={form.control}
+            name="preLiteracy"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Pre-Literacy</FormLabel>
+                <Select 
+                  onValueChange={field.onChange} 
+                  defaultValue={field.value} 
+                  value={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select rating" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {progressRatingOptions.map((rating) => (
+                      <SelectItem key={rating} value={rating}>
+                        {rating.charAt(0).toUpperCase() + rating.slice(1)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          
+          <FormField
+            control={form.control}
+            name="preNumeracy"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Pre-Numeracy</FormLabel>
+                <Select 
+                  onValueChange={field.onChange} 
+                  defaultValue={field.value} 
+                  value={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select rating" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {progressRatingOptions.map((rating) => (
+                      <SelectItem key={rating} value={rating}>
+                        {rating.charAt(0).toUpperCase() + rating.slice(1)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          
+          <FormField
+            control={form.control}
+            name="motorSkills"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Motor Skills</FormLabel>
+                <Select 
+                  onValueChange={field.onChange} 
+                  defaultValue={field.value} 
+                  value={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select rating" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {progressRatingOptions.map((rating) => (
+                      <SelectItem key={rating} value={rating}>
+                        {rating.charAt(0).toUpperCase() + rating.slice(1)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          
+          <FormField
+            control={form.control}
+            name="emotionalDevelopment"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Emotional Development</FormLabel>
+                <Select 
+                  onValueChange={field.onChange} 
+                  defaultValue={field.value} 
+                  value={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select rating" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {progressRatingOptions.map((rating) => (
+                      <SelectItem key={rating} value={rating}>
+                        {rating.charAt(0).toUpperCase() + rating.slice(1)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          
+          <FormField
+            control={form.control}
+            name="comments"
+            render={({ field }) => (
+              <FormItem className="sm:col-span-2">
+                <FormLabel>Comments (Optional)</FormLabel>
+                <FormControl>
+                  <Textarea 
+                    placeholder="Add any additional comments"
+                    className="resize-none"
+                    rows={3}
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+        
+        <div className="flex justify-end space-x-3">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button 
+            type="submit" 
+            disabled={mutation.isPending}
+            className="bg-purple-600 hover:bg-purple-700"
+          >
+            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {progress ? "Update Progress" : "Save Progress"}
+          </Button>
+        </div>
+      </form>
+    </Form>
   );
 };
 

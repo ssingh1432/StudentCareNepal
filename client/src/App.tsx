@@ -3,8 +3,9 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ProtectedRoute } from "./lib/protected-route";
 import NotFound from "@/pages/not-found";
+import { AuthProvider } from "@/hooks/use-auth";
+import { ProtectedRoute } from "./lib/protected-route";
 import AuthPage from "@/pages/auth-page";
 import DashboardPage from "@/pages/dashboard-page";
 import StudentsPage from "@/pages/students-page";
@@ -12,7 +13,7 @@ import ProgressPage from "@/pages/progress-page";
 import PlansPage from "@/pages/plans-page";
 import ReportsPage from "@/pages/reports-page";
 import TeachersPage from "@/pages/teachers-page";
-import StudentAssignmentsPage from "@/pages/student-assignments-page";
+import AssignmentsPage from "@/pages/assignments-page";
 
 function Router() {
   return (
@@ -21,10 +22,10 @@ function Router() {
       <ProtectedRoute path="/" component={DashboardPage} />
       <ProtectedRoute path="/students" component={StudentsPage} />
       <ProtectedRoute path="/progress" component={ProgressPage} />
-      <ProtectedRoute path="/plans" component={PlansPage} />
+      <ProtectedRoute path="/teaching-plans" component={PlansPage} />
       <ProtectedRoute path="/reports" component={ReportsPage} />
       <ProtectedRoute path="/teachers" component={TeachersPage} />
-      <ProtectedRoute path="/assign-students" component={StudentAssignmentsPage} />
+      <ProtectedRoute path="/assignments" component={AssignmentsPage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -33,10 +34,12 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Router />
+        </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
