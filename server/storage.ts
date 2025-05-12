@@ -9,6 +9,7 @@ export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>; // For authentication compatibility
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: number, user: Partial<InsertUser>): Promise<User>;
   deleteUser(id: number): Promise<void>;
@@ -109,6 +110,11 @@ export class MemStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<User | undefined> {
     return Array.from(this.usersMap.values()).find(user => user.email === email);
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    // In our system, email is used as username
+    return this.getUserByEmail(username);
   }
 
   async createUser(user: InsertUser): Promise<User> {

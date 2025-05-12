@@ -42,12 +42,19 @@ export function setupAuth(app: Express) {
   app.use(passport.session());
 
   passport.use(
-    new LocalStrategy(async (username, password, done) => {
-      const user = await storage.getUserByUsername(username);
-      if (!user || !(await comparePasswords(password, user.password))) {
-        return done(null, false);
-      } else {
-        return done(null, user);
+    new LocalStrategy({
+      usernameField: 'email', // Use 'email' field from the request as the username
+      passwordField: 'password'
+    }, async (email, password, done) => {
+      try {
+        const user = await storage.getUserByEmail(email);
+        if (!user || !(await comparePasswords(password, user.password))) {
+          return done(null, false, { message: "Invalid email or password" });
+        } else {
+          return done(null, user);
+        }
+      } catch (error) {
+        return done(error);
       }
     }),
   );
@@ -59,24 +66,58 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/register", async (req, res, next) => {
-    const existingUser = await storage.getUserByUsername(req.body.username);
+    // Use email as username
+    const { email, password, name, role, assignedClasses } = req.body;
+    const existingUser = await storage.getUserByEmail(email);
     if (existingUser) {
-      return res.status(400).send("Username already exists");
+      return res.status(400).json({ message: "Email already exists" });
     }
 
-    const user = await storage.createUser({
-      ...req.body,
-      password: await hashPassword(req.body.password),
-    });
+    try {
+      const user = await storage.createUser({
+        email,
+        password: await hashPassword(password),
+        name,
+        role: role || "teacher",
+        assignedClasses: assignedClasses || []
+      });
 
-    req.login(user, (err) => {
-      if (err) return next(err);
-      res.status(201).json(user);
-    });
+      // Remove password before sending back
+      const userResponse = { ...user };
+      delete userResponse.password;
+
+      req.login(user, (err) => {
+        if (err) return next(err);
+        res.status(201).json(userResponse);
+      });
+    } catch (error) {
+      console.error("Registration error:", error);
+      res.status(500).json({ message: "Registration failed" });
+    }
   });
 
-  app.post("/api/login", passport.authenticate("local"), (req, res) => {
-    res.status(200).json(req.user);
+  app.post("/api/login", (req, res, next) => {
+    passport.authenticate("local", (err, user, info) => {
+      if (err) {
+        return next(err);
+      }
+      
+      if (!user) {
+        return res.status(401).json({ message: info?.message || "Authentication failed" });
+      }
+      
+      req.login(user, (loginErr) => {
+        if (loginErr) {
+          return next(loginErr);
+        }
+        
+        // Remove password before sending back
+        const userResponse = { ...user };
+        delete (userResponse as any).password;
+        
+        return res.status(200).json(userResponse);
+      });
+    })(req, res, next);
   });
 
   app.post("/api/logout", (req, res, next) => {
