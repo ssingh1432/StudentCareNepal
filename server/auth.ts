@@ -1,134 +1,135 @@
-import { Request, Response, NextFunction } from "express";
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
+import passport from "passport";
+import { Strategy as LocalStrategy } from "passport-local";
+import { Express } from "express";
+import session from "express-session";
+import { scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { promisify } from "util";
 import { storage } from "./storage";
-import { User } from "@shared/schema";
+import { User as SelectUser } from "@shared/schema";
 
-// JWT secret key
-const JWT_SECRET = process.env.JWT_SECRET || "nepal_central_high_school_secret";
-
-// Generate JWT token
-export function generateToken(user: User): string {
-  const payload = {
-    id: user.id,
-    email: user.email,
-    role: user.role,
-    classes: user.classes
-  };
-  
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "24h" });
-}
-
-// Verify password
-export async function verifyPassword(plainPassword: string, hashedPassword: string): Promise<boolean> {
-  return await bcrypt.compare(plainPassword, hashedPassword);
-}
-
-// Hash password
-export async function hashPassword(password: string): Promise<string> {
-  return await bcrypt.hash(password, 10);
-}
-
-// JWT verification middleware
-export function authenticateToken(req: Request, res: Response, next: NextFunction) {
-  // Get token from headers or cookies
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(" ")[1];
-  
-  if (!token) {
-    return res.status(401).json({ message: "No token provided" });
+declare global {
+  namespace Express {
+    interface User extends SelectUser {}
   }
-  
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ message: "Invalid or expired token" });
+}
+
+const scryptAsync = promisify(scrypt);
+
+async function hashPassword(password: string) {
+  const salt = randomBytes(16).toString("hex");
+  const buf = (await scryptAsync(password, salt, 64)) as Buffer;
+  return `${buf.toString("hex")}.${salt}`;
+}
+
+async function comparePasswords(supplied: string, stored: string) {
+  const [hashed, salt] = stored.split(".");
+  const hashedBuf = Buffer.from(hashed, "hex");
+  const suppliedBuf = (await scryptAsync(supplied, salt, 64)) as Buffer;
+  return timingSafeEqual(hashedBuf, suppliedBuf);
+}
+
+export function setupAuth(app: Express) {
+  const sessionSettings: session.SessionOptions = {
+    secret: process.env.SESSION_SECRET || 'nepal-central-high-school-secret',
+    resave: false,
+    saveUninitialized: false,
+    store: storage.sessionStore,
+    cookie: {
+      maxAge: 1000 * 60 * 60 * 24, // 24 hours
     }
-    
-    req.user = decoded as User;
-    next();
+  };
+
+  app.set("trust proxy", 1);
+  app.use(session(sessionSettings));
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  passport.use(
+    new LocalStrategy(
+      {
+        usernameField: 'email',
+        passwordField: 'password',
+      },
+      async (email, password, done) => {
+        try {
+          const user = await storage.getUserByEmail(email);
+          if (!user || !(await comparePasswords(password, user.password))) {
+            return done(null, false, { message: 'Invalid email or password' });
+          }
+          return done(null, user);
+        } catch (error) {
+          return done(error);
+        }
+      }
+    )
+  );
+
+  passport.serializeUser((user, done) => done(null, user.id));
+  passport.deserializeUser(async (id: number, done) => {
+    try {
+      const user = await storage.getUser(id);
+      done(null, user);
+    } catch (error) {
+      done(error);
+    }
   });
-}
 
-// Admin role middleware
-export function isAdmin(req: Request, res: Response, next: NextFunction) {
-  if (!req.user) {
-    return res.status(401).json({ message: "Authentication required" });
-  }
-  
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin access required" });
-  }
-  
-  next();
-}
+  app.post("/api/register", async (req, res, next) => {
+    try {
+      const { email, password, name, role, assignedClasses } = req.body;
+      
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ message: "User with this email already exists" });
+      }
 
-// Teacher role middleware
-export function isTeacher(req: Request, res: Response, next: NextFunction) {
-  if (!req.user) {
-    return res.status(401).json({ message: "Authentication required" });
-  }
-  
-  if (req.user.role !== "teacher") {
-    return res.status(403).json({ message: "Teacher access required" });
-  }
-  
-  next();
-}
+      // Create new user with hashed password
+      const hashedPassword = await hashPassword(password);
+      const user = await storage.createUser({
+        email,
+        password: hashedPassword,
+        name,
+        role: role || 'teacher',
+        assignedClasses: assignedClasses || [],
+      });
 
-// Check teacher class assignment
-export function canAccessClass(req: Request, res: Response, next: NextFunction) {
-  if (!req.user) {
-    return res.status(401).json({ message: "Authentication required" });
-  }
-  
-  // Admins can access all classes
-  if (req.user.role === "admin") {
-    return next();
-  }
-  
-  const requestedClass = req.params.class || req.body.class;
-  
-  if (!requestedClass) {
-    return next();
-  }
-  
-  if (!req.user.classes || !req.user.classes.includes(requestedClass)) {
-    return res.status(403).json({ 
-      message: `You don't have access to the ${requestedClass} class` 
+      // Remove password from response
+      const { password: _, ...userWithoutPassword } = user;
+
+      // Log the user in
+      req.login(user, (err) => {
+        if (err) return next(err);
+        return res.status(201).json(userWithoutPassword);
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/login", (req, res, next) => {
+    passport.authenticate("local", (err, user, info) => {
+      if (err) return next(err);
+      if (!user) return res.status(401).json({ message: info.message || "Invalid credentials" });
+      
+      req.login(user, (err) => {
+        if (err) return next(err);
+        const { password, ...userWithoutPassword } = user;
+        return res.status(200).json(userWithoutPassword);
+      });
+    })(req, res, next);
+  });
+
+  app.post("/api/logout", (req, res, next) => {
+    req.logout((err) => {
+      if (err) return next(err);
+      res.status(200).json({ message: "Logged out successfully" });
     });
-  }
-  
-  next();
-}
+  });
 
-// Check student access permission for teachers
-export async function canAccessStudent(req: Request, res: Response, next: NextFunction) {
-  if (!req.user) {
-    return res.status(401).json({ message: "Authentication required" });
-  }
-  
-  // Admins can access all students
-  if (req.user.role === "admin") {
-    return next();
-  }
-  
-  const studentId = parseInt(req.params.id || req.body.studentId);
-  
-  if (!studentId) {
-    return next();
-  }
-  
-  const student = await storage.getStudent(studentId);
-  
-  if (!student) {
-    return res.status(404).json({ message: "Student not found" });
-  }
-  
-  if (student.teacherId !== req.user.id) {
-    return res.status(403).json({ 
-      message: "You don't have access to this student" 
-    });
-  }
-  
-  next();
+  app.get("/api/user", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Not authenticated" });
+    const { password, ...userWithoutPassword } = req.user;
+    res.json(userWithoutPassword);
+  });
 }

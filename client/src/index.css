@@ -3,83 +3,49 @@
 @tailwind utilities;
 
 :root {
-  --background: 0 0% 100%;
-  --foreground: 20 14.3% 4.1%;
-  --muted: 60 4.8% 95.9%;
-  --muted-foreground: 25 5.3% 44.7%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 20 14.3% 4.1%;
-  --card: 0 0% 100%;
-  --card-foreground: 20 14.3% 4.1%;
-  --border: 20 5.9% 90%;
-  --input: 20 5.9% 90%;
-  --primary: 271 81% 56%; /* purple-600 in Tailwind */
-  --primary-foreground: 0 0% 100%;
-  --secondary: 271 91% 96%; /* purple-100 in Tailwind */
-  --secondary-foreground: 271 81% 56%;
-  --accent: 60 4.8% 95.9%;
-  --accent-foreground: 24 9.8% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 60 9.1% 97.8%;
-  --ring: 271 81% 56%;
-  --radius: 0.5rem;
-
-  /* Chart colors */
-  --chart-1: 271 81% 56%;
-  --chart-2: 262 83% 58%;
-  --chart-3: 231 91% 51%;
-  --chart-4: 187 100% 42%;
-  --chart-5: 151 83% 41%;
-
-  /* Sidebar colors */
-  --sidebar-background: 271 81% 56%;
-  --sidebar-foreground: 0 0% 100%;
-  --sidebar-primary: 271 91% 96%;
-  --sidebar-primary-foreground: 271 81% 56%;
-  --sidebar-accent: 271 100% 90%;
-  --sidebar-accent-foreground: 271 81% 65%;
-  --sidebar-border: 271 55% 52%;
-  --sidebar-ring: 271 91% 96%;
-}
-
-.dark {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
-  --primary: 271 91% 65%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 271 40% 16%;
-  --secondary-foreground: 271 91% 65%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --ring: 271 91% 65%;
-
-  /* Chart colors */
-  --chart-1: 271 91% 65%;
-  --chart-2: 262 93% 68%;
-  --chart-3: 231 91% 61%;
-  --chart-4: 187 90% 52%;
-  --chart-5: 151 83% 51%;
-
-  /* Sidebar colors */
-  --sidebar-background: 271 40% 20%;
-  --sidebar-foreground: 0 0% 98%;
-  --sidebar-primary: 271 91% 65%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 271 45% 25%;
-  --sidebar-accent-foreground: 271 91% 65%;
-  --sidebar-border: 271 35% 32%;
-  --sidebar-ring: 271 91% 65%;
-}
+      --background: 0 0% 100%;
+--foreground: 20 14.3% 4.1%;
+--muted: 60 4.8% 95.9%;
+--muted-foreground: 25 5.3% 44.7%;
+--popover: 0 0% 100%;
+--popover-foreground: 20 14.3% 4.1%;
+--card: 0 0% 100%;
+--card-foreground: 20 14.3% 4.1%;
+--border: 20 5.9% 90%;
+--input: 20 5.9% 90%;
+--primary: 207 90% 54%;
+--primary-foreground: 211 100% 99%;
+--secondary: 60 4.8% 95.9%;
+--secondary-foreground: 24 9.8% 10%;
+--accent: 60 4.8% 95.9%;
+--accent-foreground: 24 9.8% 10%;
+--destructive: 0 84.2% 60.2%;
+--destructive-foreground: 60 9.1% 97.8%;
+--ring: 20 14.3% 4.1%;
+--radius: 0.5rem;
+  }
+  .dark {
+      --background: 240 10% 3.9%;
+--foreground: 0 0% 98%;
+--muted: 240 3.7% 15.9%;
+--muted-foreground: 240 5% 64.9%;
+--popover: 240 10% 3.9%;
+--popover-foreground: 0 0% 98%;
+--card: 240 10% 3.9%;
+--card-foreground: 0 0% 98%;
+--border: 240 3.7% 15.9%;
+--input: 240 3.7% 15.9%;
+--primary: 207 90% 54%;
+--primary-foreground: 211 100% 99%;
+--secondary: 240 3.7% 15.9%;
+--secondary-foreground: 0 0% 98%;
+--accent: 240 3.7% 15.9%;
+--accent-foreground: 0 0% 98%;
+--destructive: 0 62.8% 30.6%;
+--destructive-foreground: 0 0% 98%;
+--ring: 240 4.9% 83.9%;
+--radius: 0.5rem;
+  }
 
 @layer base {
   * {
@@ -88,224 +54,5 @@
 
   body {
     @apply font-sans antialiased bg-background text-foreground;
-  }
-
-  /* Custom scrollbar for the app */
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-
-  ::-webkit-scrollbar-track {
-    @apply bg-secondary/50;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    @apply bg-primary/50 rounded-full;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-primary/70;
-  }
-}
-
-/* Utility classes */
-.app-container {
-  @apply min-h-screen bg-gray-50;
-}
-
-.section-title {
-  @apply text-2xl font-bold text-gray-900;
-}
-
-.section-subtitle {
-  @apply mt-1 text-sm text-gray-500;
-}
-
-/* Purple-themed button styles */
-.btn-primary {
-  @apply inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500;
-}
-
-.btn-secondary {
-  @apply inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500;
-}
-
-.btn-danger {
-  @apply inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500;
-}
-
-/* Form element styles */
-.form-label {
-  @apply block text-sm font-medium text-gray-700;
-}
-
-.form-input {
-  @apply mt-1 focus:ring-purple-500 focus:border-purple-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md;
-}
-
-.form-select {
-  @apply mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md;
-}
-
-.form-textarea {
-  @apply mt-1 focus:ring-purple-500 focus:border-purple-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md;
-}
-
-/* Badge styles */
-.badge {
-  @apply px-2 inline-flex text-xs leading-5 font-semibold rounded-full;
-}
-
-.badge-green {
-  @apply bg-green-100 text-green-800;
-}
-
-.badge-yellow {
-  @apply bg-yellow-100 text-yellow-800;
-}
-
-.badge-red {
-  @apply bg-red-100 text-red-800;
-}
-
-.badge-blue {
-  @apply bg-blue-100 text-blue-800;
-}
-
-.badge-purple {
-  @apply bg-purple-100 text-purple-800;
-}
-
-.badge-gray {
-  @apply bg-gray-100 text-gray-800;
-}
-
-/* Card styles */
-.card {
-  @apply bg-white overflow-hidden shadow rounded-lg;
-}
-
-.card-header {
-  @apply px-4 py-4 border-b border-gray-200;
-}
-
-.card-body {
-  @apply px-4 py-5 sm:p-6;
-}
-
-.card-footer {
-  @apply px-4 py-4 border-t border-gray-200;
-}
-
-/* Table styles */
-.table-container {
-  @apply overflow-x-auto;
-}
-
-.table {
-  @apply min-w-full divide-y divide-gray-200;
-}
-
-.table-header {
-  @apply bg-gray-50;
-}
-
-.table-header th {
-  @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider;
-}
-
-.table-body {
-  @apply bg-white divide-y divide-gray-200;
-}
-
-.table-row {
-  @apply hover:bg-gray-50;
-}
-
-.table-cell {
-  @apply px-6 py-4 whitespace-nowrap text-sm text-gray-500;
-}
-
-/* Pagination styles */
-.pagination {
-  @apply relative z-0 inline-flex rounded-md shadow-sm -space-x-px;
-}
-
-.pagination-item {
-  @apply relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50;
-}
-
-.pagination-item-active {
-  @apply z-10 bg-purple-50 border-purple-500 text-purple-600;
-}
-
-/* Alert styles */
-.alert {
-  @apply rounded-md p-4;
-}
-
-.alert-info {
-  @apply bg-blue-50 text-blue-700;
-}
-
-.alert-success {
-  @apply bg-green-50 text-green-700;
-}
-
-.alert-warning {
-  @apply bg-yellow-50 text-yellow-700;
-}
-
-.alert-error {
-  @apply bg-red-50 text-red-700;
-}
-
-/* Print styles */
-@media print {
-  .no-print {
-    display: none !important;
-  }
-  
-  .print-container {
-    margin: 0;
-    padding: 0;
-  }
-  
-  .print-header {
-    text-align: center;
-    margin-bottom: 20px;
-  }
-  
-  .print-header h1 {
-    font-size: 24px;
-    font-weight: bold;
-    color: #7C3AED;
-  }
-  
-  .print-table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-  
-  .print-table th, .print-table td {
-    border: 1px solid #e5e7eb;
-    padding: 8px;
-    text-align: left;
-  }
-  
-  .print-table th {
-    background-color: #f9fafb;
-    font-weight: 600;
-    font-size: 12px;
-    text-transform: uppercase;
-    color: #6b7280;
-  }
-  
-  .print-footer {
-    margin-top: 20px;
-    text-align: right;
-    font-size: 12px;
-    color: #6b7280;
   }
 }

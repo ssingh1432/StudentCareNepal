@@ -1,249 +1,144 @@
-import { 
-  users, User, InsertUser, 
-  teacherClasses, TeacherClass, InsertTeacherClass,
-  students, Student, InsertStudent,
-  progressEntries, ProgressEntry, InsertProgressEntry,
-  teachingPlans, TeachingPlan, InsertTeachingPlan
+import {
+  User, InsertUser,
+  Student, InsertStudent,
+  Progress, InsertProgress,
+  TeachingPlan, InsertTeachingPlan,
+  roleEnum, classEnum, learningAbilityEnum, writingSpeedEnum, planTypeEnum, progressRatingEnum
 } from "@shared/schema";
-import * as bcrypt from 'bcrypt';
+import session from "express-session";
+import createMemoryStore from "memorystore";
+
+const MemoryStore = createMemoryStore(session);
 
 export interface IStorage {
-  // User management
+  // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  updateUser(id: number, user: Partial<InsertUser>): Promise<User | undefined>;
+  updateUser(id: number, user: Partial<User>): Promise<User | undefined>;
   deleteUser(id: number): Promise<boolean>;
-  getAllTeachers(): Promise<User[]>;
-
-  // Teacher classes
-  getTeacherClasses(teacherId: number): Promise<TeacherClass[]>;
-  assignClassToTeacher(teacherClass: InsertTeacherClass): Promise<TeacherClass>;
-  removeClassFromTeacher(id: number): Promise<boolean>;
-
-  // Student management
+  getTeachers(): Promise<User[]>;
+  
+  // Student operations
   getStudent(id: number): Promise<Student | undefined>;
-  getAllStudents(): Promise<Student[]>;
-  getStudentsByClass(className: string): Promise<Student[]>;
-  getStudentsByTeacher(teacherId: number): Promise<Student[]>;
+  getStudents(filters?: {
+    class?: string;
+    teacherId?: number;
+    learningAbility?: string;
+  }): Promise<Student[]>;
   createStudent(student: InsertStudent): Promise<Student>;
-  updateStudent(id: number, student: Partial<InsertStudent>): Promise<Student | undefined>;
+  updateStudent(id: number, student: Partial<Student>): Promise<Student | undefined>;
   deleteStudent(id: number): Promise<boolean>;
-  assignStudentToTeacher(studentId: number, teacherId: number): Promise<Student | undefined>;
-
-  // Progress tracking
-  getProgressEntry(id: number): Promise<ProgressEntry | undefined>;
-  getProgressEntriesByStudent(studentId: number): Promise<ProgressEntry[]>;
-  createProgressEntry(entry: InsertProgressEntry): Promise<ProgressEntry>;
-  updateProgressEntry(id: number, entry: Partial<InsertProgressEntry>): Promise<ProgressEntry | undefined>;
-  deleteProgressEntry(id: number): Promise<boolean>;
-
-  // Teaching plans
+  assignStudentToTeacher(studentId: number, teacherId: number): Promise<boolean>;
+  
+  // Progress operations
+  getProgress(id: number): Promise<Progress | undefined>;
+  getProgressByStudent(studentId: number): Promise<Progress[]>;
+  createProgress(progress: InsertProgress): Promise<Progress>;
+  updateProgress(id: number, progress: Partial<Progress>): Promise<Progress | undefined>;
+  deleteProgress(id: number): Promise<boolean>;
+  
+  // Teaching Plan operations
   getTeachingPlan(id: number): Promise<TeachingPlan | undefined>;
-  getAllTeachingPlans(): Promise<TeachingPlan[]>;
-  getTeachingPlansByClass(className: string): Promise<TeachingPlan[]>;
-  getTeachingPlansByTeacher(teacherId: number): Promise<TeachingPlan[]>;
+  getTeachingPlans(filters?: {
+    type?: string;
+    class?: string;
+    teacherId?: number;
+  }): Promise<TeachingPlan[]>;
   createTeachingPlan(plan: InsertTeachingPlan): Promise<TeachingPlan>;
-  updateTeachingPlan(id: number, plan: Partial<InsertTeachingPlan>): Promise<TeachingPlan | undefined>;
+  updateTeachingPlan(id: number, plan: Partial<TeachingPlan>): Promise<TeachingPlan | undefined>;
   deleteTeachingPlan(id: number): Promise<boolean>;
-
-  // Authentication
-  verifyPassword(password: string, hashedPassword: string): Promise<boolean>;
-  hashPassword(password: string): Promise<string>;
+  
+  // Session store for authentication
+  sessionStore: session.SessionStore;
 }
 
 export class MemStorage implements IStorage {
   private users: Map<number, User>;
-  private teacherClasses: Map<number, TeacherClass>;
   private students: Map<number, Student>;
-  private progressEntries: Map<number, ProgressEntry>;
+  private progresses: Map<number, Progress>;
   private teachingPlans: Map<number, TeachingPlan>;
+  
   private userIdCounter: number;
-  private teacherClassIdCounter: number;
   private studentIdCounter: number;
-  private progressEntryIdCounter: number;
-  private teachingPlanIdCounter: number;
+  private progressIdCounter: number;
+  private planIdCounter: number;
+  
+  sessionStore: session.SessionStore;
 
   constructor() {
     this.users = new Map();
-    this.teacherClasses = new Map();
     this.students = new Map();
-    this.progressEntries = new Map();
+    this.progresses = new Map();
     this.teachingPlans = new Map();
+    
     this.userIdCounter = 1;
-    this.teacherClassIdCounter = 1;
     this.studentIdCounter = 1;
-    this.progressEntryIdCounter = 1;
-    this.teachingPlanIdCounter = 1;
-
-    // Seed admin user (don't really need to hash in memory storage but good practice)
-    this.hashPassword('lkg123').then(hashedPassword => {
-      this.users.set(this.userIdCounter, {
-        id: this.userIdCounter++,
-        email: 'admin@school.com',
-        password: hashedPassword,
-        name: 'Admin User',
-        role: 'admin',
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-
-      // Seed teacher users
-      const teacherEmails = ['teacher1@school.com', 'teacher2@school.com', 'teacher3@school.com'];
-      const teacherNames = ['Anita Gurung', 'Binay Shrestha', 'Champa Devi'];
-      const classes = ['Nursery', 'LKG', 'UKG'];
-
-      teacherEmails.forEach((email, index) => {
-        this.hashPassword('lkg123').then(hashedPassword => {
-          const teacherId = this.userIdCounter;
-          this.users.set(teacherId, {
-            id: teacherId,
-            email: email,
-            password: hashedPassword,
-            name: teacherNames[index],
-            role: 'teacher',
-            createdAt: new Date(),
-            updatedAt: new Date()
-          });
-          this.userIdCounter++;
-
-          // Assign class to teacher
-          this.teacherClasses.set(this.teacherClassIdCounter, {
-            id: this.teacherClassIdCounter,
-            teacherId: teacherId,
-            class: classes[index] as any,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          });
-          this.teacherClassIdCounter++;
-
-          // Seed students for each teacher/class (10 per class)
-          for (let i = 1; i <= 10; i++) {
-            const className = classes[index];
-            const age = className === 'Nursery' ? 3 : (className === 'LKG' ? 4 : 5);
-            const learningAbilities = ['Talented', 'Average', 'Slow Learner'];
-            const writingSpeeds = className === 'Nursery' ? ['N/A'] : ['Speed Writing', 'Slow Writing'];
-            
-            this.students.set(this.studentIdCounter, {
-              id: this.studentIdCounter,
-              name: `Student ${this.studentIdCounter} (${className})`,
-              age: age,
-              class: className as any,
-              parentContact: `+977 98${Math.floor(10000000 + Math.random() * 90000000)}`,
-              learningAbility: learningAbilities[Math.floor(Math.random() * learningAbilities.length)] as any,
-              writingSpeed: writingSpeeds[Math.floor(Math.random() * writingSpeeds.length)] as any,
-              notes: '',
-              photoUrl: '',
-              teacherId: teacherId,
-              createdAt: new Date(),
-              updatedAt: new Date()
-            });
-
-            // Add progress entries for some students
-            if (i <= 5) {
-              const ratings = ['Excellent', 'Good', 'Needs Improvement'];
-              this.progressEntries.set(this.progressEntryIdCounter, {
-                id: this.progressEntryIdCounter,
-                studentId: this.studentIdCounter,
-                date: new Date(),
-                socialSkills: ratings[Math.floor(Math.random() * ratings.length)] as any,
-                preLiteracy: ratings[Math.floor(Math.random() * ratings.length)] as any,
-                preNumeracy: ratings[Math.floor(Math.random() * ratings.length)] as any,
-                motorSkills: ratings[Math.floor(Math.random() * ratings.length)] as any,
-                emotionalDevelopment: ratings[Math.floor(Math.random() * ratings.length)] as any,
-                comments: `Progress entry for student ${this.studentIdCounter}`,
-                createdBy: teacherId,
-                createdAt: new Date(),
-                updatedAt: new Date()
-              });
-              this.progressEntryIdCounter++;
-            }
-
-            this.studentIdCounter++;
-          }
-
-          // Create teaching plans for each class
-          const planTypes = ['Annual', 'Monthly', 'Weekly', 'Weekly'];
-          planTypes.forEach((type, planIndex) => {
-            const now = new Date();
-            let startDate = new Date();
-            let endDate = new Date();
-            
-            if (type === 'Annual') {
-              startDate = new Date(now.getFullYear(), 0, 1);
-              endDate = new Date(now.getFullYear(), 11, 31);
-            } else if (type === 'Monthly') {
-              startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-              endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-            } else {
-              startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-              endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7);
-            }
-
-            this.teachingPlans.set(this.teachingPlanIdCounter, {
-              id: this.teachingPlanIdCounter,
-              type: type as any,
-              class: classes[index] as any,
-              title: `${type} Plan for ${classes[index]} - ${planIndex + 1}`,
-              description: `This is a ${type.toLowerCase()} teaching plan for ${classes[index]} class.`,
-              activities: `Activities for ${classes[index]} ${type.toLowerCase()} plan`,
-              goals: `Learning goals for ${classes[index]} ${type.toLowerCase()} plan`,
-              startDate: startDate,
-              endDate: endDate,
-              createdBy: teacherId,
-              createdAt: new Date(),
-              updatedAt: new Date()
-            });
-            this.teachingPlanIdCounter++;
-          });
-        });
-      });
+    this.progressIdCounter = 1;
+    this.planIdCounter = 1;
+    
+    this.sessionStore = new MemoryStore({
+      checkPeriod: 86400000, // 24 hours in milliseconds
+    });
+    
+    // Create default admin user
+    this.createUser({
+      email: 'admin@school.com',
+      password: 'lkg123', // This will be hashed in the auth.ts file
+      name: 'Admin User',
+      role: 'admin',
+      assignedClasses: [],
+    });
+    
+    // Create default teacher users
+    this.createUser({
+      email: 'teacher1@school.com',
+      password: 'lkg123',
+      name: 'Anita Gurung',
+      role: 'teacher',
+      assignedClasses: ['Nursery'],
+    });
+    
+    this.createUser({
+      email: 'teacher2@school.com',
+      password: 'lkg123',
+      name: 'Binay Shrestha',
+      role: 'teacher',
+      assignedClasses: ['LKG'],
+    });
+    
+    this.createUser({
+      email: 'teacher3@school.com',
+      password: 'lkg123',
+      name: 'Champa Devi',
+      role: 'teacher',
+      assignedClasses: ['UKG'],
     });
   }
 
-  // User Management
+  // User operations
   async getUser(id: number): Promise<User | undefined> {
     return this.users.get(id);
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    for (const user of this.users.values()) {
-      if (user.email === email) {
-        return user;
-      }
-    }
-    return undefined;
+    return Array.from(this.users.values()).find(
+      (user) => user.email.toLowerCase() === email.toLowerCase()
+    );
   }
 
-  async createUser(userData: InsertUser): Promise<User> {
-    const hashedPassword = await this.hashPassword(userData.password);
+  async createUser(user: InsertUser): Promise<User> {
     const id = this.userIdCounter++;
-    const now = new Date();
-    const user: User = {
-      id,
-      ...userData,
-      password: hashedPassword,
-      createdAt: now,
-      updatedAt: now
-    };
-    this.users.set(id, user);
-    return user;
+    const newUser: User = { ...user, id };
+    this.users.set(id, newUser);
+    return newUser;
   }
 
-  async updateUser(id: number, userData: Partial<InsertUser>): Promise<User | undefined> {
+  async updateUser(id: number, userData: Partial<User>): Promise<User | undefined> {
     const user = this.users.get(id);
     if (!user) return undefined;
-
-    const updatedUser: User = {
-      ...user,
-      ...userData,
-      updatedAt: new Date()
-    };
-
-    if (userData.password) {
-      updatedUser.password = await this.hashPassword(userData.password);
-    }
-
+    
+    const updatedUser = { ...user, ...userData };
     this.users.set(id, updatedUser);
     return updatedUser;
   }
@@ -252,74 +147,53 @@ export class MemStorage implements IStorage {
     return this.users.delete(id);
   }
 
-  async getAllTeachers(): Promise<User[]> {
-    return Array.from(this.users.values()).filter(user => user.role === 'teacher');
+  async getTeachers(): Promise<User[]> {
+    return Array.from(this.users.values()).filter(
+      (user) => user.role === 'teacher'
+    );
   }
 
-  // Teacher Classes
-  async getTeacherClasses(teacherId: number): Promise<TeacherClass[]> {
-    return Array.from(this.teacherClasses.values())
-      .filter(tc => tc.teacherId === teacherId);
-  }
-
-  async assignClassToTeacher(teacherClass: InsertTeacherClass): Promise<TeacherClass> {
-    const id = this.teacherClassIdCounter++;
-    const now = new Date();
-    const newTeacherClass: TeacherClass = {
-      id,
-      ...teacherClass,
-      createdAt: now,
-      updatedAt: now
-    };
-    this.teacherClasses.set(id, newTeacherClass);
-    return newTeacherClass;
-  }
-
-  async removeClassFromTeacher(id: number): Promise<boolean> {
-    return this.teacherClasses.delete(id);
-  }
-
-  // Student Management
+  // Student operations
   async getStudent(id: number): Promise<Student | undefined> {
     return this.students.get(id);
   }
 
-  async getAllStudents(): Promise<Student[]> {
-    return Array.from(this.students.values());
+  async getStudents(filters?: {
+    class?: string;
+    teacherId?: number;
+    learningAbility?: string;
+  }): Promise<Student[]> {
+    let students = Array.from(this.students.values());
+    
+    if (filters) {
+      if (filters.class) {
+        students = students.filter(student => student.class === filters.class);
+      }
+      
+      if (filters.teacherId) {
+        students = students.filter(student => student.teacherId === filters.teacherId);
+      }
+      
+      if (filters.learningAbility) {
+        students = students.filter(student => student.learningAbility === filters.learningAbility);
+      }
+    }
+    
+    return students;
   }
 
-  async getStudentsByClass(className: string): Promise<Student[]> {
-    return Array.from(this.students.values())
-      .filter(student => student.class === className);
-  }
-
-  async getStudentsByTeacher(teacherId: number): Promise<Student[]> {
-    return Array.from(this.students.values())
-      .filter(student => student.teacherId === teacherId);
-  }
-
-  async createStudent(studentData: InsertStudent): Promise<Student> {
+  async createStudent(student: InsertStudent): Promise<Student> {
     const id = this.studentIdCounter++;
-    const now = new Date();
-    const student: Student = {
-      id,
-      ...studentData,
-      createdAt: now,
-      updatedAt: now
-    };
-    this.students.set(id, student);
-    return student;
+    const newStudent: Student = { ...student, id };
+    this.students.set(id, newStudent);
+    return newStudent;
   }
 
-  async updateStudent(id: number, studentData: Partial<InsertStudent>): Promise<Student | undefined> {
+  async updateStudent(id: number, studentData: Partial<Student>): Promise<Student | undefined> {
     const student = this.students.get(id);
     if (!student) return undefined;
-
-    const updatedStudent: Student = {
-      ...student,
-      ...studentData,
-      updatedAt: new Date()
-    };
+    
+    const updatedStudent = { ...student, ...studentData };
     this.students.set(id, updatedStudent);
     return updatedStudent;
   }
@@ -328,126 +202,96 @@ export class MemStorage implements IStorage {
     return this.students.delete(id);
   }
 
-  async assignStudentToTeacher(studentId: number, teacherId: number): Promise<Student | undefined> {
+  async assignStudentToTeacher(studentId: number, teacherId: number): Promise<boolean> {
     const student = this.students.get(studentId);
-    if (!student) return undefined;
-
-    const updatedStudent: Student = {
-      ...student,
-      teacherId,
-      updatedAt: new Date()
-    };
-    this.students.set(studentId, updatedStudent);
-    return updatedStudent;
+    if (!student) return false;
+    
+    const teacher = this.users.get(teacherId);
+    if (!teacher || teacher.role !== 'teacher') return false;
+    
+    student.teacherId = teacherId;
+    this.students.set(studentId, student);
+    return true;
   }
 
-  // Progress Tracking
-  async getProgressEntry(id: number): Promise<ProgressEntry | undefined> {
-    return this.progressEntries.get(id);
+  // Progress operations
+  async getProgress(id: number): Promise<Progress | undefined> {
+    return this.progresses.get(id);
   }
 
-  async getProgressEntriesByStudent(studentId: number): Promise<ProgressEntry[]> {
-    return Array.from(this.progressEntries.values())
-      .filter(entry => entry.studentId === studentId);
+  async getProgressByStudent(studentId: number): Promise<Progress[]> {
+    return Array.from(this.progresses.values()).filter(
+      (progress) => progress.studentId === studentId
+    );
   }
 
-  async createProgressEntry(entryData: InsertProgressEntry): Promise<ProgressEntry> {
-    const id = this.progressEntryIdCounter++;
-    const now = new Date();
-    const entry: ProgressEntry = {
-      id,
-      ...entryData,
-      createdAt: now,
-      updatedAt: now
-    };
-    this.progressEntries.set(id, entry);
-    return entry;
+  async createProgress(progress: InsertProgress): Promise<Progress> {
+    const id = this.progressIdCounter++;
+    const newProgress: Progress = { ...progress, id };
+    this.progresses.set(id, newProgress);
+    return newProgress;
   }
 
-  async updateProgressEntry(id: number, entryData: Partial<InsertProgressEntry>): Promise<ProgressEntry | undefined> {
-    const entry = this.progressEntries.get(id);
-    if (!entry) return undefined;
-
-    const updatedEntry: ProgressEntry = {
-      ...entry,
-      ...entryData,
-      updatedAt: new Date()
-    };
-    this.progressEntries.set(id, updatedEntry);
-    return updatedEntry;
+  async updateProgress(id: number, progressData: Partial<Progress>): Promise<Progress | undefined> {
+    const progress = this.progresses.get(id);
+    if (!progress) return undefined;
+    
+    const updatedProgress = { ...progress, ...progressData };
+    this.progresses.set(id, updatedProgress);
+    return updatedProgress;
   }
 
-  async deleteProgressEntry(id: number): Promise<boolean> {
-    return this.progressEntries.delete(id);
+  async deleteProgress(id: number): Promise<boolean> {
+    return this.progresses.delete(id);
   }
 
-  // Teaching Plans
+  // Teaching Plan operations
   async getTeachingPlan(id: number): Promise<TeachingPlan | undefined> {
     return this.teachingPlans.get(id);
   }
 
-  async getAllTeachingPlans(): Promise<TeachingPlan[]> {
-    return Array.from(this.teachingPlans.values());
+  async getTeachingPlans(filters?: {
+    type?: string;
+    class?: string;
+    teacherId?: number;
+  }): Promise<TeachingPlan[]> {
+    let plans = Array.from(this.teachingPlans.values());
+    
+    if (filters) {
+      if (filters.type) {
+        plans = plans.filter(plan => plan.type === filters.type);
+      }
+      
+      if (filters.class) {
+        plans = plans.filter(plan => plan.class === filters.class);
+      }
+      
+      if (filters.teacherId) {
+        plans = plans.filter(plan => plan.teacherId === filters.teacherId);
+      }
+    }
+    
+    return plans;
   }
 
-  async getTeachingPlansByClass(className: string): Promise<TeachingPlan[]> {
-    return Array.from(this.teachingPlans.values())
-      .filter(plan => plan.class === className);
+  async createTeachingPlan(plan: InsertTeachingPlan): Promise<TeachingPlan> {
+    const id = this.planIdCounter++;
+    const newPlan: TeachingPlan = { ...plan, id };
+    this.teachingPlans.set(id, newPlan);
+    return newPlan;
   }
 
-  async getTeachingPlansByTeacher(teacherId: number): Promise<TeachingPlan[]> {
-    return Array.from(this.teachingPlans.values())
-      .filter(plan => plan.createdBy === teacherId);
-  }
-
-  async createTeachingPlan(planData: InsertTeachingPlan): Promise<TeachingPlan> {
-    const id = this.teachingPlanIdCounter++;
-    const now = new Date();
-    const plan: TeachingPlan = {
-      id,
-      ...planData,
-      createdAt: now,
-      updatedAt: now
-    };
-    this.teachingPlans.set(id, plan);
-    return plan;
-  }
-
-  async updateTeachingPlan(id: number, planData: Partial<InsertTeachingPlan>): Promise<TeachingPlan | undefined> {
+  async updateTeachingPlan(id: number, planData: Partial<TeachingPlan>): Promise<TeachingPlan | undefined> {
     const plan = this.teachingPlans.get(id);
     if (!plan) return undefined;
-
-    const updatedPlan: TeachingPlan = {
-      ...plan,
-      ...planData,
-      updatedAt: new Date()
-    };
+    
+    const updatedPlan = { ...plan, ...planData };
     this.teachingPlans.set(id, updatedPlan);
     return updatedPlan;
   }
 
   async deleteTeachingPlan(id: number): Promise<boolean> {
     return this.teachingPlans.delete(id);
-  }
-
-  // Authentication methods
-  async verifyPassword(password: string, hashedPassword: string): Promise<boolean> {
-    // In a real application, this would be bcrypt.compare()
-    // But we can simulate it for memory storage
-    try {
-      return await bcrypt.compare(password, hashedPassword);
-    } catch (error) {
-      return password === hashedPassword; // Fallback for testing
-    }
-  }
-
-  async hashPassword(password: string): Promise<string> {
-    // In a real application, this would be bcrypt.hash()
-    try {
-      return await bcrypt.hash(password, 10);
-    } catch (error) {
-      return password; // Fallback for testing
-    }
   }
 }
 

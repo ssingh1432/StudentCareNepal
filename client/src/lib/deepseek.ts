@@ -1,65 +1,42 @@
-import { apiRequest } from './queryClient';
+import { apiRequest } from "@/lib/queryClient";
 
-// Define the response type for DeepSeek API suggestions
-interface DeepSeekResponse {
+interface AIResponse {
   suggestions: string;
 }
 
-// Function to get activity suggestions from DeepSeek AI
-export const getActivitySuggestions = async (prompt: string): Promise<DeepSeekResponse> => {
+// Function to get AI suggestions for teaching activities
+export async function getAISuggestions(prompt: string): Promise<string> {
   try {
-    const response = await apiRequest('POST', '/api/ai/suggestions', { prompt });
-    return await response.json();
+    // Call our backend endpoint which handles the API communication
+    const response = await apiRequest("POST", "/api/ai-suggestions", { prompt });
+    const data: AIResponse = await response.json();
+    return data.suggestions;
   } catch (error) {
-    console.error('Error getting AI suggestions:', error);
+    console.error("Error getting AI suggestions:", error);
     throw error;
   }
-};
-
-// Helper function to generate prompts for different grade levels and activities
-export const generatePrompt = (className: string, activity: string, count: number = 3): string => {
-  return `Suggest ${count} ${activity} activities for ${className} students in Nepal Central High School following the ECED framework. These should be age-appropriate for ${className === 'Nursery' ? '3' : className === 'LKG' ? '4' : '5'}-year-old children.`;
-};
-
-// Predefined activity types for suggestions
-export const ACTIVITY_TYPES = [
-  { value: 'storytelling', label: 'Storytelling' },
-  { value: 'counting', label: 'Counting & Math' },
-  { value: 'writing', label: 'Writing' },
-  { value: 'reading', label: 'Reading' },
-  { value: 'art', label: 'Art & Craft' },
-  { value: 'physical', label: 'Physical Activity' },
-  { value: 'social', label: 'Social Skills' },
-  { value: 'motor-skills', label: 'Motor Skills' },
-];
-
-// Function to parse suggestion text into structured format
-export const parseSuggestions = (text: string): string[] => {
-  // Try to extract numbered/bulleted list items
-  const listItemRegex = /(?:\d+[\.\)]\s*|\*\s*|-\s*)([^\n]+)/g;
-  const matches = [...text.matchAll(listItemRegex)];
-  
-  if (matches.length > 0) {
-    return matches.map(match => match[1].trim());
-  }
-  
-  // If no list items found, split by newlines and filter empty lines
-  return text
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0);
-};
-
-// Component prop type for the AI suggestions component
-export interface AISuggestionsProps {
-  className: string;
-  onAddToActivities: (activities: string) => void;
-  disabled?: boolean;
 }
 
-export default {
-  getActivitySuggestions,
-  generatePrompt,
-  ACTIVITY_TYPES,
-  parseSuggestions
-};
+// Helper function to generate prompts based on class and activity type
+export function generatePrompt(className: string, activityType: string): string {
+  const ageMap = {
+    'Nursery': '3 years old',
+    'LKG': '4 years old',
+    'UKG': '5 years old'
+  };
+  
+  const age = ageMap[className as keyof typeof ageMap] || '';
+  
+  return `Suggest 5 ${activityType} activities for ${className} students (${age}) according to Nepal's ECED framework. Include detailed steps and learning objectives for each activity.`;
+}
+
+// Function to format AI suggestions for display
+export function formatSuggestions(suggestions: string): string {
+  if (!suggestions) return '';
+  
+  // Try to clean up and format the suggestions
+  return suggestions
+    .replace(/^\s*\d+\.\s*/gm, '\n• ') // Replace numbered lists with bullet points
+    .replace(/^(.*:)/gm, '**$1**')     // Bold any headings/titles
+    .trim();
+}

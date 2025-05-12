@@ -1,95 +1,83 @@
 import { v2 as cloudinary } from 'cloudinary';
 
-// Configure Cloudinary with environment variables or defaults
+// Configure Cloudinary
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'your_cloud_name',
-  api_key: process.env.CLOUDINARY_API_KEY || 'your_api_key',
-  api_secret: process.env.CLOUDINARY_API_SECRET || 'your_api_secret'
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
+  api_key: process.env.CLOUDINARY_API_KEY || '',
+  api_secret: process.env.CLOUDINARY_API_SECRET || '',
 });
-
-export interface CloudinaryUploadResult {
-  public_id: string;
-  secure_url: string;
-  width: number;
-  height: number;
-  format: string;
-  resource_type: string;
-}
 
 /**
  * Upload an image to Cloudinary
- * @param base64Image - Base64 encoded image data
- * @returns Promise resolving to upload result
+ * @param imageBuffer The image buffer to upload
+ * @returns Cloudinary upload result
  */
-export async function uploadImage(base64Image: string): Promise<CloudinaryUploadResult> {
+export async function uploadImage(imageBuffer: Buffer) {
   try {
-    // Upload to the students folder in Cloudinary
-    const result = await new Promise<CloudinaryUploadResult>((resolve, reject) => {
+    // Check if Cloudinary is configured
+    if (!process.env.CLOUDINARY_CLOUD_NAME || 
+        !process.env.CLOUDINARY_API_KEY || 
+        !process.env.CLOUDINARY_API_SECRET) {
+      throw new Error('Cloudinary API credentials not configured');
+    }
+    
+    // Convert buffer to base64
+    const base64Image = imageBuffer.toString('base64');
+    
+    // Upload to Cloudinary
+    const result = await new Promise<any>((resolve, reject) => {
       cloudinary.uploader.upload(
-        base64Image,
+        `data:image/jpeg;base64,${base64Image}`,
         {
-          folder: 'students',
+          folder: 'students', // Store in the 'students' folder
           resource_type: 'image',
-          use_filename: false,
-          unique_filename: true,
-          overwrite: false,
+          transformation: [
+            { width: 200, height: 200, crop: 'fill' }, // Resize to 200x200
+          ],
         },
         (error, result) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(result as CloudinaryUploadResult);
-          }
+          if (error) reject(error);
+          else resolve(result);
         }
       );
     });
     
     return result;
   } catch (error) {
-    console.error('Cloudinary upload error:', error);
+    console.error('Error uploading image to Cloudinary:', error);
     throw new Error('Failed to upload image to Cloudinary');
   }
 }
 
 /**
  * Delete an image from Cloudinary
- * @param publicId - The public ID of the image to delete
- * @returns Promise resolving to deletion result
+ * @param publicId Cloudinary public ID of the image
+ * @returns Cloudinary delete result
  */
-export async function deleteImage(publicId: string): Promise<{ result: string }> {
+export async function deleteImage(publicId: string) {
   try {
-    return await new Promise((resolve, reject) => {
+    // Check if Cloudinary is configured
+    if (!process.env.CLOUDINARY_CLOUD_NAME || 
+        !process.env.CLOUDINARY_API_KEY || 
+        !process.env.CLOUDINARY_API_SECRET) {
+      throw new Error('Cloudinary API credentials not configured');
+    }
+    
+    // Delete from Cloudinary
+    const result = await new Promise<any>((resolve, reject) => {
       cloudinary.uploader.destroy(
         publicId,
+        {},
         (error, result) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(result as { result: string });
-          }
+          if (error) reject(error);
+          else resolve(result);
         }
       );
     });
+    
+    return result;
   } catch (error) {
-    console.error('Cloudinary deletion error:', error);
+    console.error('Error deleting image from Cloudinary:', error);
     throw new Error('Failed to delete image from Cloudinary');
-  }
-}
-
-/**
- * Get the public ID from a Cloudinary URL
- * @param url - The Cloudinary URL
- * @returns The public ID
- */
-export function getPublicIdFromUrl(url: string): string | null {
-  // URLs are like: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/image_id.jpg
-  try {
-    const urlParts = url.split('/');
-    const filenamePart = urlParts[urlParts.length - 1];
-    const folderPart = urlParts[urlParts.length - 2];
-    return `${folderPart}/${filenamePart.split('.')[0]}`;
-  } catch (error) {
-    console.error('Error extracting public ID from URL:', error);
-    return null;
   }
 }
