@@ -1,695 +1,446 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth } from "./auth";
-import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
+import multer from "multer";
+import { insertStudentSchema, insertProgressSchema, insertTeachingPlanSchema, User } from "@shared/schema";
 import axios from "axios";
-import { insertStudentSchema, insertProgressSchema, insertTeachingPlanSchema, insertUserSchema } from "@shared/schema";
-
-// Initialize Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
-  api_key: process.env.CLOUDINARY_API_KEY || "",
-  api_secret: process.env.CLOUDINARY_API_SECRET || ""
-});
-
-// Setup in-memory storage for file uploads
-const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 1 * 1024 * 1024 } // 1MB limit
-});
-
-// Middleware to check if user has admin role
-const isAdmin = (req: Request, res: Response, next: NextFunction) => {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-  
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ message: "Forbidden: Admin access required" });
-  }
-  
-  next();
-};
-
-// Middleware to check if user is authenticated
-const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-  
-  next();
-};
-
-// Middleware to check if teacher can access specific student
-const canAccessStudent = async (req: Request, res: Response, next: NextFunction) => {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-  
-  // Admin can access all students
-  if (req.user.role === 'admin') {
-    return next();
-  }
-  
-  const studentId = parseInt(req.params.id);
-  const student = await storage.getStudent(studentId);
-  
-  if (!student) {
-    return res.status(404).json({ message: "Student not found" });
-  }
-  
-  // Check if student is assigned to this teacher
-  if (student.teacherId !== req.user.id) {
-    return res.status(403).json({ message: "You don't have access to this student" });
-  }
-  
-  next();
-};
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Setup authentication
   setupAuth(app);
   
-  // Get dashboard statistics
-  app.get("/api/dashboard/stats", isAuthenticated, async (req, res) => {
-    try {
-      let students = [];
-      let teachers = [];
-      let teachingPlans = [];
-      let progressEntries = [];
-      
-      // Admin gets all data, teachers get only their data
-      if (req.user.role === 'admin') {
-        students = await storage.getStudents();
-        teachers = await storage.getAllTeachers();
-        teachingPlans = await storage.getTeachingPlans();
-        progressEntries = await storage.progressStore ? Array.from(storage.progressStore.values()) : [];
+  // Setup Cloudinary
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
+    api_key: process.env.CLOUDINARY_API_KEY || "",
+    api_secret: process.env.CLOUDINARY_API_SECRET || "",
+  });
+  
+  // Setup multer for file uploads
+  const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 1024 * 1024, // 1 MB max file size
+    },
+    fileFilter: (req, file, cb) => {
+      // Accept only jpeg and png
+      if (file.mimetype === "image/jpeg" || file.mimetype === "image/png") {
+        cb(null, true);
       } else {
-        students = await storage.getStudents({ teacherId: req.user.id });
-        teachers = [req.user];
-        teachingPlans = await storage.getTeachingPlans({ teacherId: req.user.id });
-        const studentIds = students.map(s => s.id);
-        progressEntries = Array.from(storage.progressStore.values())
-          .filter(p => studentIds.includes(p.studentId));
+        cb(null, false);
       }
-      
-      // Count students by class
-      const nurseryCount = students.filter(s => s.class === 'Nursery').length;
-      const lkgCount = students.filter(s => s.class === 'LKG').length;
-      const ukgCount = students.filter(s => s.class === 'UKG').length;
-      
-      const stats = {
-        totalStudents: students.length,
-        teacherCount: teachers.length,
-        teachingPlanCount: teachingPlans.length,
-        progressEntryCount: progressEntries.length,
-        classCounts: {
-          nursery: nurseryCount,
-          lkg: lkgCount,
-          ukg: ukgCount
-        }
-      };
-      
-      res.json(stats);
-    } catch (error) {
-      res.status(500).json({ message: "Error retrieving dashboard statistics" });
     }
   });
-  
-  // Get recent activities
-  app.get("/api/activities", isAuthenticated, async (req, res) => {
+
+  // Teachers API
+  app.get("/api/teachers", async (req, res) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
-      const activities = await storage.getRecentActivities(limit);
-      res.json(activities);
+      const teachers = await storage.getAllTeachers();
+      const teachersWithoutPassword = teachers.map(({ password, ...teacher }) => teacher);
+      res.json(teachersWithoutPassword);
     } catch (error) {
-      res.status(500).json({ message: "Error retrieving recent activities" });
+      res.status(500).json({ message: "Failed to fetch teachers" });
     }
   });
-  
-  // Teacher management routes (admin only)
-  app.get("/api/teachers", isAuthenticated, async (req, res) => {
+
+  app.post("/api/admin/teachers", async (req, res) => {
     try {
-      if (req.user.role === 'admin') {
-        const teachers = await storage.getAllTeachers();
-        // Remove passwords from response
-        const teachersWithoutPassword = teachers.map(({ password, ...teacher }) => teacher);
-        res.json(teachersWithoutPassword);
-      } else {
-        // Teachers can only see themselves
-        const { password, ...teacherWithoutPassword } = req.user;
-        res.json([teacherWithoutPassword]);
-      }
-    } catch (error) {
-      res.status(500).json({ message: "Error retrieving teachers" });
-    }
-  });
-  
-  app.post("/api/teachers", isAdmin, async (req, res) => {
-    try {
-      const parsedData = insertUserSchema.parse(req.body);
-      
-      // Check if email is already in use
-      const existingUser = await storage.getUserByEmail(parsedData.email);
-      if (existingUser) {
-        return res.status(400).json({ message: "Email already in use" });
-      }
-      
-      // Create teacher account
-      const teacher = await storage.createUser({
-        ...parsedData,
-        role: "teacher"
+      const teacherData = req.body;
+      const newTeacher = await storage.createUser({
+        ...teacherData,
+        role: "teacher",
       });
       
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Teacher Created",
-        details: `Admin created teacher account for ${teacher.name}`
-      });
-      
-      // Remove password from response
-      const { password, ...teacherWithoutPassword } = teacher;
+      const { password, ...teacherWithoutPassword } = newTeacher;
       res.status(201).json(teacherWithoutPassword);
     } catch (error) {
-      res.status(400).json({ message: error.message });
+      res.status(500).json({ message: "Failed to create teacher" });
     }
   });
-  
-  app.get("/api/teachers/:id", isAuthenticated, async (req, res) => {
+
+  app.put("/api/admin/teachers/:id", async (req, res) => {
     try {
       const teacherId = parseInt(req.params.id);
+      const teacherData = req.body;
       
-      // Teachers can only access their own data
-      if (req.user.role !== 'admin' && req.user.id !== teacherId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      
-      const teacher = await storage.getUser(teacherId);
-      if (!teacher || teacher.role !== 'teacher') {
+      const updatedTeacher = await storage.updateUser(teacherId, teacherData);
+      if (!updatedTeacher) {
         return res.status(404).json({ message: "Teacher not found" });
       }
       
-      // Remove password from response
-      const { password, ...teacherWithoutPassword } = teacher;
-      res.json(teacherWithoutPassword);
-    } catch (error) {
-      res.status(500).json({ message: "Error retrieving teacher" });
-    }
-  });
-  
-  app.put("/api/teachers/:id", isAdmin, async (req, res) => {
-    try {
-      const teacherId = parseInt(req.params.id);
-      const teacher = await storage.getUser(teacherId);
-      
-      if (!teacher || teacher.role !== 'teacher') {
-        return res.status(404).json({ message: "Teacher not found" });
-      }
-      
-      const updatedTeacher = await storage.updateUser(teacherId, req.body);
-      
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Teacher Updated",
-        details: `Admin updated teacher account for ${teacher.name}`
-      });
-      
-      // Remove password from response
       const { password, ...teacherWithoutPassword } = updatedTeacher;
       res.json(teacherWithoutPassword);
     } catch (error) {
-      res.status(400).json({ message: error.message });
+      res.status(500).json({ message: "Failed to update teacher" });
     }
   });
-  
-  app.delete("/api/teachers/:id", isAdmin, async (req, res) => {
+
+  app.delete("/api/admin/teachers/:id", async (req, res) => {
     try {
       const teacherId = parseInt(req.params.id);
-      const teacher = await storage.getUser(teacherId);
+      const success = await storage.deleteUser(teacherId);
       
-      if (!teacher || teacher.role !== 'teacher') {
+      if (!success) {
         return res.status(404).json({ message: "Teacher not found" });
       }
       
-      await storage.deleteUser(teacherId);
-      
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Teacher Deleted",
-        details: `Admin deleted teacher account for ${teacher.name}`
-      });
-      
-      res.sendStatus(204);
+      res.status(204).end();
     } catch (error) {
-      res.status(500).json({ message: "Error deleting teacher" });
+      res.status(500).json({ message: "Failed to delete teacher" });
     }
   });
-  
-  // Student management routes
-  app.get("/api/students", isAuthenticated, async (req, res) => {
+
+  // Students API
+  app.get("/api/students", async (req, res) => {
     try {
-      const filters: any = {};
+      const user = req.user as User;
+      let students = [];
       
-      // Apply filters from query parameters
-      if (req.query.class) {
-        filters.class = req.query.class;
+      if (user.role === "admin") {
+        // Admin can see all students
+        students = await storage.getAllStudents();
+      } else {
+        // Teachers can see only their assigned students
+        students = await storage.getStudentsByTeacher(user.id);
       }
       
-      if (req.query.learningAbility) {
-        filters.learningAbility = req.query.learningAbility;
-      }
-      
-      // Teachers can only see their assigned students
-      if (req.user.role !== 'admin') {
-        filters.teacherId = req.user.id;
-      } else if (req.query.teacherId) {
-        filters.teacherId = parseInt(req.query.teacherId as string);
-      }
-      
-      const students = await storage.getStudents(filters);
       res.json(students);
     } catch (error) {
-      res.status(500).json({ message: "Error retrieving students" });
+      res.status(500).json({ message: "Failed to fetch students" });
     }
   });
-  
-  app.post("/api/students", isAuthenticated, upload.single('photo'), async (req, res) => {
-    try {
-      // Parse student data
-      const studentData = JSON.parse(req.body.data);
-      const parsedData = insertStudentSchema.parse(studentData);
-      
-      // If teacher is creating, set teacherId to their ID
-      if (req.user.role === 'teacher') {
-        parsedData.teacherId = req.user.id;
-      }
-      
-      // Upload photo to Cloudinary if provided
-      let photoUrl = null;
-      if (req.file) {
-        // Convert buffer to base64 string
-        const base64Data = req.file.buffer.toString('base64');
-        const dataURI = `data:${req.file.mimetype};base64,${base64Data}`;
-        
-        // Upload to Cloudinary
-        try {
-          const uploadResponse = await cloudinary.uploader.upload(dataURI, {
-            folder: 'students',
-            resource_type: 'image'
-          });
-          photoUrl = uploadResponse.secure_url;
-        } catch (cloudinaryError) {
-          console.error("Cloudinary upload error:", cloudinaryError);
-        }
-      }
-      
-      // Create the student with photo URL if available
-      const student = await storage.createStudent({
-        ...parsedData,
-        photoUrl: photoUrl || parsedData.photoUrl
-      });
-      
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Student Created",
-        details: `${req.user.name} added a new student: ${student.name} (${student.class})`
-      });
-      
-      res.status(201).json(student);
-    } catch (error) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  
-  app.get("/api/students/:id", isAuthenticated, canAccessStudent, async (req, res) => {
+
+  app.get("/api/students/:id", async (req, res) => {
     try {
       const studentId = parseInt(req.params.id);
       const student = await storage.getStudent(studentId);
       
       if (!student) {
         return res.status(404).json({ message: "Student not found" });
+      }
+      
+      // Check if user has access to this student
+      const user = req.user as User;
+      if (user.role !== "admin" && student.teacherId !== user.id) {
+        return res.status(403).json({ message: "You don't have access to this student" });
       }
       
       res.json(student);
     } catch (error) {
-      res.status(500).json({ message: "Error retrieving student" });
+      res.status(500).json({ message: "Failed to fetch student" });
     }
   });
-  
-  app.put("/api/students/:id", isAuthenticated, canAccessStudent, upload.single('photo'), async (req, res) => {
+
+  app.post("/api/students", upload.single("photo"), async (req, res) => {
     try {
-      const studentId = parseInt(req.params.id);
-      const student = await storage.getStudent(studentId);
-      
-      if (!student) {
-        return res.status(404).json({ message: "Student not found" });
-      }
-      
-      // Parse student data
       const studentData = JSON.parse(req.body.data);
       
+      // Validate student data
+      const parseResult = insertStudentSchema.safeParse(studentData);
+      if (!parseResult.success) {
+        return res.status(400).json({ message: parseResult.error.message });
+      }
+      
       // Upload photo to Cloudinary if provided
-      let photoUrl = studentData.photoUrl;
+      let photoUrl = undefined;
+      let photoPublicId = undefined;
+      
       if (req.file) {
-        // Convert buffer to base64 string
-        const base64Data = req.file.buffer.toString('base64');
-        const dataURI = `data:${req.file.mimetype};base64,${base64Data}`;
+        const b64 = Buffer.from(req.file.buffer).toString("base64");
+        const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
         
-        // Upload to Cloudinary
         try {
-          const uploadResponse = await cloudinary.uploader.upload(dataURI, {
-            folder: 'students',
-            resource_type: 'image'
+          const result = await cloudinary.uploader.upload(dataURI, {
+            folder: "students",
+            resource_type: "image",
           });
-          photoUrl = uploadResponse.secure_url;
+          
+          photoUrl = result.secure_url;
+          photoPublicId = result.public_id;
         } catch (cloudinaryError) {
           console.error("Cloudinary upload error:", cloudinaryError);
+          // Continue without photo if upload fails
         }
       }
       
-      // Update the student
-      const updatedStudent = await storage.updateStudent(studentId, {
+      // Create student with photo if available
+      const student = await storage.createStudent({
         ...studentData,
-        photoUrl
+        photoUrl,
+        photoPublicId,
       });
       
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Student Updated",
-        details: `${req.user.name} updated student: ${student.name} (${student.class})`
+      res.status(201).json(student);
+    } catch (error) {
+      console.error("Error creating student:", error);
+      res.status(500).json({ message: "Failed to create student" });
+    }
+  });
+
+  app.put("/api/students/:id", upload.single("photo"), async (req, res) => {
+    try {
+      const studentId = parseInt(req.params.id);
+      const studentData = JSON.parse(req.body.data);
+      
+      // Check if student exists
+      const existingStudent = await storage.getStudent(studentId);
+      if (!existingStudent) {
+        return res.status(404).json({ message: "Student not found" });
+      }
+      
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && existingStudent.teacherId !== user.id) {
+        return res.status(403).json({ message: "You don't have permission to update this student" });
+      }
+      
+      // Upload new photo if provided
+      let photoUrl = existingStudent.photoUrl;
+      let photoPublicId = existingStudent.photoPublicId;
+      
+      if (req.file) {
+        // Delete old photo if exists
+        if (existingStudent.photoPublicId) {
+          try {
+            await cloudinary.uploader.destroy(existingStudent.photoPublicId);
+          } catch (error) {
+            console.error("Error deleting old photo:", error);
+          }
+        }
+        
+        // Upload new photo
+        const b64 = Buffer.from(req.file.buffer).toString("base64");
+        const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
+        
+        try {
+          const result = await cloudinary.uploader.upload(dataURI, {
+            folder: "students",
+            resource_type: "image",
+          });
+          
+          photoUrl = result.secure_url;
+          photoPublicId = result.public_id;
+        } catch (cloudinaryError) {
+          console.error("Cloudinary upload error:", cloudinaryError);
+          // Keep old photo if upload fails
+        }
+      }
+      
+      // Update student
+      const updatedStudent = await storage.updateStudent(studentId, {
+        ...studentData,
+        photoUrl,
+        photoPublicId,
       });
       
       res.json(updatedStudent);
     } catch (error) {
-      res.status(400).json({ message: error.message });
+      console.error("Error updating student:", error);
+      res.status(500).json({ message: "Failed to update student" });
     }
   });
-  
-  app.delete("/api/students/:id", isAuthenticated, canAccessStudent, async (req, res) => {
+
+  app.delete("/api/students/:id", async (req, res) => {
     try {
       const studentId = parseInt(req.params.id);
-      const student = await storage.getStudent(studentId);
       
+      // Check if student exists
+      const student = await storage.getStudent(studentId);
       if (!student) {
         return res.status(404).json({ message: "Student not found" });
       }
       
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && student.teacherId !== user.id) {
+        return res.status(403).json({ message: "You don't have permission to delete this student" });
+      }
+      
+      // Delete photo from Cloudinary if exists
+      if (student.photoPublicId) {
+        try {
+          await cloudinary.uploader.destroy(student.photoPublicId);
+        } catch (error) {
+          console.error("Error deleting photo:", error);
+        }
+      }
+      
+      // Delete student
       await storage.deleteStudent(studentId);
       
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Student Deleted",
-        details: `${req.user.name} deleted student: ${student.name} (${student.class})`
-      });
-      
-      res.sendStatus(204);
+      res.status(204).end();
     } catch (error) {
-      res.status(500).json({ message: "Error deleting student" });
+      console.error("Error deleting student:", error);
+      res.status(500).json({ message: "Failed to delete student" });
     }
   });
-  
+
   // Assign student to teacher (admin only)
-  app.post("/api/students/:studentId/assign/:teacherId", isAdmin, async (req, res) => {
+  app.post("/api/admin/assign-student", async (req, res) => {
     try {
-      const studentId = parseInt(req.params.studentId);
-      const teacherId = parseInt(req.params.teacherId);
+      const { studentId, teacherId } = req.body;
       
-      const student = await storage.getStudent(studentId);
-      if (!student) {
-        return res.status(404).json({ message: "Student not found" });
-      }
-      
-      const teacher = await storage.getUser(teacherId);
-      if (!teacher || teacher.role !== 'teacher') {
-        return res.status(404).json({ message: "Teacher not found" });
-      }
-      
-      // Check if teacher is assigned to the student's class
-      if (teacher.assignedClasses && !teacher.assignedClasses.includes(student.class)) {
-        return res.status(400).json({ 
-          message: `Teacher is not assigned to ${student.class} class`
-        });
+      if (!studentId || !teacherId) {
+        return res.status(400).json({ message: "Student ID and Teacher ID are required" });
       }
       
       const success = await storage.assignStudentToTeacher(studentId, teacherId);
       
-      if (success) {
-        // Create activity
-        await storage.createActivity({
-          userId: req.user.id,
-          action: "Student Assigned",
-          details: `Admin assigned student ${student.name} to teacher ${teacher.name}`
-        });
-        
-        res.sendStatus(200);
-      } else {
-        res.status(400).json({ message: "Failed to assign student to teacher" });
+      if (!success) {
+        return res.status(404).json({ message: "Student or teacher not found" });
       }
-    } catch (error) {
-      res.status(500).json({ message: "Error assigning student to teacher" });
-    }
-  });
-  
-  // Progress tracking routes
-  app.get("/api/progress", isAuthenticated, async (req, res) => {
-    try {
-      if (req.query.studentId) {
-        const studentId = parseInt(req.query.studentId as string);
-        const student = await storage.getStudent(studentId);
-        
-        if (!student) {
-          return res.status(404).json({ message: "Student not found" });
-        }
-        
-        // Check if user has access to this student
-        if (req.user.role !== 'admin' && student.teacherId !== req.user.id) {
-          return res.status(403).json({ message: "You don't have access to this student's progress" });
-        }
-        
-        const progressEntries = await storage.getProgressByStudent(studentId);
-        res.json(progressEntries);
-      } else if (req.query.class) {
-        const className = req.query.class as string;
-        
-        // Teachers can only see progress for their assigned classes
-        if (req.user.role !== 'admin') {
-          if (!req.user.assignedClasses?.includes(className)) {
-            return res.status(403).json({ 
-              message: `You don't have access to ${className} class progress`
-            });
-          }
-        }
-        
-        const progressEntries = await storage.getProgressByClass(className);
-        res.json(progressEntries);
-      } else {
-        // Return all progress entries user has access to
-        let progressEntries = [];
-        
-        if (req.user.role === 'admin') {
-          // Admin can see all progress entries
-          progressEntries = Array.from(storage.progressStore.values());
-        } else {
-          // Teacher can only see progress for their students
-          const students = await storage.getStudents({ teacherId: req.user.id });
-          const studentIds = students.map(s => s.id);
-          progressEntries = Array.from(storage.progressStore.values())
-            .filter(p => studentIds.includes(p.studentId));
-        }
-        
-        res.json(progressEntries);
-      }
-    } catch (error) {
-      res.status(500).json({ message: "Error retrieving progress entries" });
-    }
-  });
-  
-  app.post("/api/progress", isAuthenticated, async (req, res) => {
-    try {
-      const parsedData = insertProgressSchema.parse(req.body);
       
-      // Verify student exists
-      const student = await storage.getStudent(parsedData.studentId);
+      res.status(200).json({ message: "Student assigned successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to assign student" });
+    }
+  });
+
+  // Progress API
+  app.get("/api/progress/student/:studentId", async (req, res) => {
+    try {
+      const studentId = parseInt(req.params.studentId);
+      
+      // Check if student exists
+      const student = await storage.getStudent(studentId);
       if (!student) {
         return res.status(404).json({ message: "Student not found" });
       }
       
-      // Verify user has access to this student
-      if (req.user.role !== 'admin' && student.teacherId !== req.user.id) {
-        return res.status(403).json({ message: "You don't have access to this student" });
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && student.teacherId !== user.id) {
+        return res.status(403).json({ message: "You don't have access to this student's progress" });
       }
       
-      // Add teacherId to the progress entry
-      const progressEntry = await storage.createProgress({
-        ...parsedData,
-        teacherId: req.user.id
-      });
-      
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Progress Recorded",
-        details: `${req.user.name} recorded progress for student: ${student.name}`
-      });
-      
-      res.status(201).json(progressEntry);
+      const progressEntries = await storage.getProgressByStudent(studentId);
+      res.json(progressEntries);
     } catch (error) {
-      res.status(400).json({ message: error.message });
+      res.status(500).json({ message: "Failed to fetch progress" });
     }
   });
-  
-  app.get("/api/progress/:id", isAuthenticated, async (req, res) => {
+
+  app.post("/api/progress", async (req, res) => {
+    try {
+      const progressData = req.body;
+      
+      // Validate progress data
+      const parseResult = insertProgressSchema.safeParse(progressData);
+      if (!parseResult.success) {
+        return res.status(400).json({ message: parseResult.error.message });
+      }
+      
+      // Check if student exists
+      const student = await storage.getStudent(progressData.studentId);
+      if (!student) {
+        return res.status(404).json({ message: "Student not found" });
+      }
+      
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && student.teacherId !== user.id) {
+        return res.status(403).json({ message: "You don't have permission to add progress for this student" });
+      }
+      
+      // Create progress with current user as creator
+      const progress = await storage.createProgress({
+        ...progressData,
+        createdBy: user.id,
+      });
+      
+      res.status(201).json(progress);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create progress entry" });
+    }
+  });
+
+  app.put("/api/progress/:id", async (req, res) => {
     try {
       const progressId = parseInt(req.params.id);
-      const progressEntry = await storage.getProgress(progressId);
+      const progressData = req.body;
       
-      if (!progressEntry) {
+      // Check if progress exists
+      const existingProgress = await storage.getProgressById(progressId);
+      if (!existingProgress) {
         return res.status(404).json({ message: "Progress entry not found" });
       }
       
-      // Check if user has access to this progress entry
-      if (req.user.role !== 'admin' && progressEntry.teacherId !== req.user.id) {
-        const student = await storage.getStudent(progressEntry.studentId);
-        if (!student || student.teacherId !== req.user.id) {
-          return res.status(403).json({ message: "You don't have access to this progress entry" });
-        }
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && existingProgress.createdBy !== user.id) {
+        return res.status(403).json({ message: "You don't have permission to update this progress entry" });
       }
       
-      res.json(progressEntry);
-    } catch (error) {
-      res.status(500).json({ message: "Error retrieving progress entry" });
-    }
-  });
-  
-  app.put("/api/progress/:id", isAuthenticated, async (req, res) => {
-    try {
-      const progressId = parseInt(req.params.id);
-      const progressEntry = await storage.getProgress(progressId);
-      
-      if (!progressEntry) {
-        return res.status(404).json({ message: "Progress entry not found" });
-      }
-      
-      // Check if user has access to this progress entry
-      if (req.user.role !== 'admin' && progressEntry.teacherId !== req.user.id) {
-        return res.status(403).json({ message: "You don't have access to this progress entry" });
-      }
-      
-      const updatedProgress = await storage.updateProgress(progressId, req.body);
-      
-      // Create activity
-      const student = await storage.getStudent(progressEntry.studentId);
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Progress Updated",
-        details: `${req.user.name} updated progress for student: ${student?.name || 'Unknown'}`
-      });
+      // Update progress
+      const updatedProgress = await storage.updateProgress(progressId, progressData);
       
       res.json(updatedProgress);
     } catch (error) {
-      res.status(400).json({ message: error.message });
+      res.status(500).json({ message: "Failed to update progress entry" });
     }
   });
-  
-  app.delete("/api/progress/:id", isAuthenticated, async (req, res) => {
+
+  app.delete("/api/progress/:id", async (req, res) => {
     try {
       const progressId = parseInt(req.params.id);
-      const progressEntry = await storage.getProgress(progressId);
       
-      if (!progressEntry) {
+      // Check if progress exists
+      const progress = await storage.getProgressById(progressId);
+      if (!progress) {
         return res.status(404).json({ message: "Progress entry not found" });
       }
       
-      // Check if user has access to this progress entry
-      if (req.user.role !== 'admin' && progressEntry.teacherId !== req.user.id) {
-        return res.status(403).json({ message: "You don't have access to this progress entry" });
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && progress.createdBy !== user.id) {
+        return res.status(403).json({ message: "You don't have permission to delete this progress entry" });
       }
       
+      // Delete progress
       await storage.deleteProgress(progressId);
       
-      // Create activity
-      const student = await storage.getStudent(progressEntry.studentId);
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Progress Deleted",
-        details: `${req.user.name} deleted progress for student: ${student?.name || 'Unknown'}`
-      });
-      
-      res.sendStatus(204);
+      res.status(204).end();
     } catch (error) {
-      res.status(500).json({ message: "Error deleting progress entry" });
+      res.status(500).json({ message: "Failed to delete progress entry" });
     }
   });
-  
-  // Teaching plan routes
-  app.get("/api/teaching-plans", isAuthenticated, async (req, res) => {
+
+  // Teaching Plans API
+  app.get("/api/teaching-plans", async (req, res) => {
     try {
-      const filters: any = {};
+      const user = req.user as User;
+      let plans = [];
       
-      // Apply filters from query parameters
-      if (req.query.type) {
-        filters.type = req.query.type;
+      // Filter parameters
+      const classFilter = req.query.class as string;
+      const typeFilter = req.query.type as string;
+      
+      if (user.role === "admin") {
+        // Admin can see all plans
+        plans = await storage.getAllTeachingPlans();
+      } else {
+        // Teachers can see only their plans
+        plans = await storage.getTeachingPlansByCreator(user.id);
       }
       
-      if (req.query.class) {
-        filters.class = req.query.class;
+      // Apply filters if provided
+      if (classFilter) {
+        plans = plans.filter(plan => plan.class === classFilter);
       }
       
-      // Teachers can only see their plans
-      if (req.user.role !== 'admin') {
-        filters.teacherId = req.user.id;
-      } else if (req.query.teacherId) {
-        filters.teacherId = parseInt(req.query.teacherId as string);
+      if (typeFilter) {
+        plans = plans.filter(plan => plan.type === typeFilter);
       }
       
-      const plans = await storage.getTeachingPlans(filters);
       res.json(plans);
     } catch (error) {
-      res.status(500).json({ message: "Error retrieving teaching plans" });
+      res.status(500).json({ message: "Failed to fetch teaching plans" });
     }
   });
-  
-  app.post("/api/teaching-plans", isAuthenticated, async (req, res) => {
-    try {
-      const parsedData = insertTeachingPlanSchema.parse(req.body);
-      
-      // Teachers can only create plans for their assigned classes
-      if (req.user.role !== 'admin') {
-        if (!req.user.assignedClasses?.includes(parsedData.class)) {
-          return res.status(403).json({ 
-            message: `You don't have access to create plans for ${parsedData.class} class`
-          });
-        }
-      }
-      
-      // Add teacherId to the plan
-      const plan = await storage.createTeachingPlan({
-        ...parsedData,
-        teacherId: req.user.id
-      });
-      
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Teaching Plan Created",
-        details: `${req.user.name} created a ${plan.type} plan for ${plan.class}: ${plan.title}`
-      });
-      
-      res.status(201).json(plan);
-    } catch (error) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  
-  app.get("/api/teaching-plans/:id", isAuthenticated, async (req, res) => {
+
+  app.get("/api/teaching-plans/:id", async (req, res) => {
     try {
       const planId = parseInt(req.params.id);
       const plan = await storage.getTeachingPlan(planId);
@@ -698,77 +449,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Teaching plan not found" });
       }
       
-      // Check if user has access to this plan
-      if (req.user.role !== 'admin' && plan.teacherId !== req.user.id) {
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && plan.createdBy !== user.id) {
         return res.status(403).json({ message: "You don't have access to this teaching plan" });
       }
       
       res.json(plan);
     } catch (error) {
-      res.status(500).json({ message: "Error retrieving teaching plan" });
+      res.status(500).json({ message: "Failed to fetch teaching plan" });
     }
   });
-  
-  app.put("/api/teaching-plans/:id", isAuthenticated, async (req, res) => {
+
+  app.post("/api/teaching-plans", async (req, res) => {
+    try {
+      const planData = req.body;
+      
+      // Validate plan data
+      const parseResult = insertTeachingPlanSchema.safeParse(planData);
+      if (!parseResult.success) {
+        return res.status(400).json({ message: parseResult.error.message });
+      }
+      
+      // Create plan with current user as creator
+      const user = req.user as User;
+      const plan = await storage.createTeachingPlan({
+        ...planData,
+        createdBy: user.id,
+      });
+      
+      res.status(201).json(plan);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create teaching plan" });
+    }
+  });
+
+  app.put("/api/teaching-plans/:id", async (req, res) => {
     try {
       const planId = parseInt(req.params.id);
-      const plan = await storage.getTeachingPlan(planId);
+      const planData = req.body;
       
-      if (!plan) {
+      // Check if plan exists
+      const existingPlan = await storage.getTeachingPlan(planId);
+      if (!existingPlan) {
         return res.status(404).json({ message: "Teaching plan not found" });
       }
       
-      // Check if user has access to this plan
-      if (req.user.role !== 'admin' && plan.teacherId !== req.user.id) {
-        return res.status(403).json({ message: "You don't have access to this teaching plan" });
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && existingPlan.createdBy !== user.id) {
+        return res.status(403).json({ message: "You don't have permission to update this teaching plan" });
       }
       
-      const updatedPlan = await storage.updateTeachingPlan(planId, req.body);
-      
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Teaching Plan Updated",
-        details: `${req.user.name} updated the ${plan.type} plan for ${plan.class}: ${plan.title}`
-      });
+      // Update plan
+      const updatedPlan = await storage.updateTeachingPlan(planId, planData);
       
       res.json(updatedPlan);
     } catch (error) {
-      res.status(400).json({ message: error.message });
+      res.status(500).json({ message: "Failed to update teaching plan" });
     }
   });
-  
-  app.delete("/api/teaching-plans/:id", isAuthenticated, async (req, res) => {
+
+  app.delete("/api/teaching-plans/:id", async (req, res) => {
     try {
       const planId = parseInt(req.params.id);
-      const plan = await storage.getTeachingPlan(planId);
       
+      // Check if plan exists
+      const plan = await storage.getTeachingPlan(planId);
       if (!plan) {
         return res.status(404).json({ message: "Teaching plan not found" });
       }
       
-      // Check if user has access to this plan
-      if (req.user.role !== 'admin' && plan.teacherId !== req.user.id) {
-        return res.status(403).json({ message: "You don't have access to this teaching plan" });
+      // Check permissions
+      const user = req.user as User;
+      if (user.role !== "admin" && plan.createdBy !== user.id) {
+        return res.status(403).json({ message: "You don't have permission to delete this teaching plan" });
       }
       
+      // Delete plan
       await storage.deleteTeachingPlan(planId);
       
-      // Create activity
-      await storage.createActivity({
-        userId: req.user.id,
-        action: "Teaching Plan Deleted",
-        details: `${req.user.name} deleted the ${plan.type} plan for ${plan.class}: ${plan.title}`
-      });
-      
-      res.sendStatus(204);
+      res.status(204).end();
     } catch (error) {
-      res.status(500).json({ message: "Error deleting teaching plan" });
+      res.status(500).json({ message: "Failed to delete teaching plan" });
     }
   });
-  
-  // DeepSeek AI suggestions endpoint
-  app.post("/api/ai-suggestions", isAuthenticated, async (req, res) => {
+
+  // DeepSeek AI Suggestions API
+  app.post("/api/ai-suggestions", async (req, res) => {
     try {
       const { prompt } = req.body;
       
@@ -776,55 +544,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Prompt is required" });
       }
       
-      // Check if we have the DeepSeek API key
-      const apiKey = process.env.DEEPSEEK_API_KEY;
+      // Check if we have a cached suggestion
+      const cachedSuggestion = await storage.getAiSuggestionByPrompt(prompt);
+      if (cachedSuggestion) {
+        return res.json({ suggestion: cachedSuggestion.response });
+      }
+      
+      // Make a request to DeepSeek API
+      const apiKey = process.env.DEEPSEEK_API_KEY || "";
       if (!apiKey) {
-        return res.status(503).json({ 
-          message: "AI suggestions are not available: API key not configured"
-        });
+        return res.status(503).json({ message: "DeepSeek API key is not configured" });
       }
       
       try {
-        // Call the DeepSeek API (using compatible OpenAI format)
         const response = await axios.post(
-          'https://api.deepseek.com/v1/chat/completions',
+          "https://api.deepseek.com/v1/chat/completions",
           {
-            model: "deepseek-v3",
+            model: "deepseek-v3", 
             messages: [
-              {
-                role: "system",
-                content: "You are an educational assistant for pre-primary teachers in Nepal. Generate thoughtful, age-appropriate activities and suggestions for pre-primary (Nursery, LKG, UKG) students aged 3-5 years."
-              },
-              {
-                role: "user",
+              { 
+                role: "user", 
                 content: prompt
               }
             ],
-            max_tokens: 500,
             temperature: 0.7
           },
           {
             headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${apiKey}`
             }
           }
         );
         
-        // Return the AI-generated content
-        res.json({ 
-          success: true, 
-          suggestions: response.data.choices[0].message.content 
+        const suggestion = response.data?.choices[0]?.message?.content || "No suggestion available.";
+        
+        // Cache the suggestion
+        await storage.createAiSuggestion({
+          prompt,
+          response: suggestion
         });
-      } catch (apiError) {
+        
+        res.json({ suggestion });
+      } catch (apiError: any) {
         console.error("DeepSeek API error:", apiError.response?.data || apiError.message);
-        res.status(500).json({ 
-          message: "Error generating AI suggestions",
-          error: apiError.response?.data?.error?.message || apiError.message
-        });
+        res.status(503).json({ message: "Failed to get AI suggestions. Try again later." });
       }
     } catch (error) {
-      res.status(500).json({ message: "Error processing AI suggestion request" });
+      res.status(500).json({ message: "Failed to process AI suggestion request" });
     }
   });
 

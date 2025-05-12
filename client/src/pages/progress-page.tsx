@@ -1,168 +1,245 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useLocation } from 'wouter';
-import { Sidebar } from '@/components/layout/sidebar';
-import { Header } from '@/components/layout/header';
-import { ProgressList } from '@/components/progress/progress-list';
-import { ProgressForm } from '@/components/progress/progress-form';
-import { Button } from '@/components/ui/button';
-import { PlusIcon } from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { useAuth } from '@/hooks/use-auth';
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { AppLayout } from "@/components/layout/app-layout";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
+import { Badge } from "@/components/ui/badge";
 import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogHeader, 
-  DialogTitle
-} from '@/components/ui/dialog';
-import { classOptions, Student, ProgressEntry } from '@shared/schema';
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Link } from "wouter";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { BarChartHorizontal, Edit, Trash2, Plus, Calendar } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import { Student, Progress, User } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { formatCloudinaryUrl, formatDate, getRatingColorClass } from "@/lib/utils";
 
 export default function ProgressPage() {
   const { user } = useAuth();
-  const [location] = useLocation();
-  
-  // Extract query params
-  const params = new URLSearchParams(location.split('?')[1]);
-  const initialAction = params.get('action');
-  const initialStudentId = params.get('studentId');
-  
-  // State for filtering and actions
-  const [studentFilter, setStudentFilter] = useState<string>(initialStudentId || 'all');
-  const [classFilter, setClassFilter] = useState<string>('all');
-  const [dateFilter, setDateFilter] = useState<string>('');
-  const [showAddForm, setShowAddForm] = useState<boolean>(initialAction === 'add');
-  const [editingProgress, setEditingProgress] = useState<ProgressEntry | null>(null);
-  const [selectedStudentId, setSelectedStudentId] = useState<number | null>(
-    initialStudentId ? parseInt(initialStudentId) : null
-  );
-
-  // Fetch students for dropdown
-  const { data: students, isLoading: studentsLoading } = useQuery({
-    queryKey: ['/api/students'],
-    retry: false,
+  const { toast } = useToast();
+  const [filters, setFilters] = useState({
+    student: "all",
+    class: "all",
+    date: "",
   });
 
-  // Filter students by class if class filter is active
-  const filteredStudents = students?.filter((student: Student) => {
-    return classFilter === 'all' || student.class === classFilter;
+  // Fetch students
+  const { data: students = [] } = useQuery<Student[]>({
+    queryKey: ["/api/students"],
   });
 
-  // Get selected student for form
-  const selectedStudent = selectedStudentId 
-    ? students?.find((s: Student) => s.id === selectedStudentId) 
-    : null;
-
-  // Fetch progress entries for the selected student
-  const { data: progressEntries, isLoading: progressLoading, refetch } = useQuery({
-    queryKey: ['/api/students', studentFilter === 'all' ? 'all' : parseInt(studentFilter), 'progress'],
-    queryFn: async ({ queryKey }) => {
-      const [, id, ] = queryKey;
-      if (id === 'all') {
-        // TODO: Implement endpoint to get all progress entries
-        // For now, return empty array
-        return [];
-      }
-      const res = await fetch(`/api/students/${id}/progress`, {
-        credentials: 'include',
-      });
-      if (!res.ok) throw new Error('Failed to fetch progress entries');
-      return res.json();
-    },
-    enabled: studentFilter !== 'all',
+  // Fetch progress entries for all students
+  const { data: progressEntries = [], isLoading } = useQuery<Progress[]>({
+    queryKey: ['/api/progress/all'],
   });
 
-  // Filter progress entries by date if date filter is active
-  const filteredProgressEntries = progressEntries?.filter((entry: ProgressEntry) => {
-    if (!dateFilter) return true;
+  // Create map of student IDs to student objects for quick lookup
+  const studentsMap: Record<number, Student> = {};
+  students.forEach(student => {
+    studentsMap[student.id] = student;
+  });
+
+  // Apply filters
+  const filteredProgress = progressEntries.filter(entry => {
+    const student = studentsMap[entry.studentId];
+    if (!student) return false;
     
-    const entryDate = new Date(entry.date).toISOString().split('T')[0];
-    return entryDate === dateFilter;
+    // Filter by student
+    if (filters.student !== "all" && entry.studentId !== parseInt(filters.student)) {
+      return false;
+    }
+    
+    // Filter by class
+    if (filters.class !== "all" && student.class !== filters.class) {
+      return false;
+    }
+    
+    // Filter by date
+    if (filters.date && new Date(entry.date).toISOString().split('T')[0] !== filters.date) {
+      return false;
+    }
+    
+    return true;
   });
 
-  // Handlers
-  const handleAddProgress = () => {
-    setEditingProgress(null);
-    setShowAddForm(true);
-  };
-
-  const handleEditProgress = (progress: ProgressEntry) => {
-    setEditingProgress(progress);
-    // Set the student filter to show entries for this student
-    setStudentFilter(String(progress.studentId));
-    // Find the student for the form
-    const student = students?.find((s: Student) => s.id === progress.studentId);
-    if (student) {
-      setSelectedStudentId(student.id);
+  // Function to delete a progress entry
+  const handleDeleteProgress = async (progressId: number) => {
+    if (!confirm("Are you sure you want to delete this progress entry? This action cannot be undone.")) {
+      return;
     }
-    setShowAddForm(true);
-  };
-
-  const handleCloseForm = () => {
-    setShowAddForm(false);
-    setEditingProgress(null);
-    refetch();
-  };
-
-  const handleStudentSelect = (value: string) => {
-    setStudentFilter(value);
-    if (value !== 'all') {
-      setSelectedStudentId(parseInt(value));
-    } else {
-      setSelectedStudentId(null);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+    
+    try {
+      await apiRequest("DELETE", `/api/progress/${progressId}`);
       
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header title="Progress Tracking" />
+      // Invalidate the progress query to refresh the data
+      queryClient.invalidateQueries({queryKey: ['/api/progress/all']});
+      
+      toast({
+        title: "Success",
+        description: "Progress entry deleted successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete progress entry",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Table columns definition
+  const columns = [
+    {
+      header: "Student",
+      accessorKey: "studentId",
+      cell: (progress: Progress) => {
+        const student = studentsMap[progress.studentId];
+        if (!student) return "Unknown Student";
         
-        <main className="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
-          <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
+        return (
+          <div className="flex items-center">
+            <Avatar className="h-8 w-8 mr-3">
+              <AvatarImage 
+                src={student.photoUrl ? formatCloudinaryUrl(student.photoUrl, { width: 40, height: 40 }) : undefined} 
+                alt={student.name} 
+              />
+              <AvatarFallback>{student.name.charAt(0)}</AvatarFallback>
+            </Avatar>
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">Progress Tracking</h2>
-              <p className="mt-1 text-sm text-gray-500">Monitor and record student development</p>
-            </div>
-            
-            <div className="mt-4 md:mt-0 flex-shrink-0">
-              <Button 
-                onClick={handleAddProgress}
-                className="inline-flex items-center px-4 py-2 bg-purple-600 hover:bg-purple-700"
-              >
-                <PlusIcon className="mr-2 h-4 w-4" />
-                Record Progress
-              </Button>
+              <div className="font-medium text-gray-900">{student.name}</div>
+              <div className="text-xs text-gray-500">{student.class}</div>
             </div>
           </div>
+        );
+      },
+    },
+    {
+      header: "Date",
+      accessorKey: "date",
+      cell: (progress: Progress) => (
+        <div className="flex items-center">
+          <Calendar className="h-4 w-4 mr-2 text-gray-400" />
+          <span>{formatDate(progress.date)}</span>
+        </div>
+      ),
+    },
+    {
+      header: "Social Skills",
+      accessorKey: "socialSkills",
+      cell: (progress: Progress) => (
+        <Badge className={getRatingColorClass(progress.socialSkills)}>
+          {progress.socialSkills}
+        </Badge>
+      ),
+    },
+    {
+      header: "Pre-Literacy",
+      accessorKey: "preLiteracy",
+      cell: (progress: Progress) => (
+        <Badge className={getRatingColorClass(progress.preLiteracy)}>
+          {progress.preLiteracy}
+        </Badge>
+      ),
+    },
+    {
+      header: "Pre-Numeracy",
+      accessorKey: "preNumeracy",
+      cell: (progress: Progress) => (
+        <Badge className={getRatingColorClass(progress.preNumeracy)}>
+          {progress.preNumeracy}
+        </Badge>
+      ),
+    },
+    {
+      header: "Motor Skills",
+      accessorKey: "motorSkills",
+      cell: (progress: Progress) => (
+        <Badge className={getRatingColorClass(progress.motorSkills)}>
+          {progress.motorSkills}
+        </Badge>
+      ),
+    },
+    {
+      header: "Emotional Dev.",
+      accessorKey: "emotionalDev",
+      cell: (progress: Progress) => (
+        <Badge className={getRatingColorClass(progress.emotionalDev)}>
+          {progress.emotionalDev}
+        </Badge>
+      ),
+    },
+    {
+      header: "Actions",
+      accessorKey: "id",
+      cell: (progress: Progress) => (
+        <div className="flex justify-end space-x-2">
+          <Link href={`/progress/${progress.id}`}>
+            <Button variant="ghost" size="sm">
+              <Edit className="h-4 w-4 mr-1" />
+              <span className="sr-only md:not-sr-only md:ml-1">Edit</span>
+            </Button>
+          </Link>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="text-red-600 hover:text-red-800 hover:bg-red-50"
+            onClick={() => handleDeleteProgress(progress.id)}
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            <span className="sr-only md:not-sr-only md:ml-1">Delete</span>
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <AppLayout title="Progress Tracking">
+      <div className="space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Progress Tracking</h2>
+            <p className="mt-1 text-sm text-gray-500">Monitor and record student development</p>
+          </div>
           
-          {/* Filter Controls */}
-          <div className="bg-white p-4 shadow rounded-lg mb-6">
+          <div className="mt-4 md:mt-0 flex-shrink-0">
+            <Link href="/progress/new">
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Record Progress
+              </Button>
+            </Link>
+          </div>
+        </div>
+
+        {/* Filter Controls */}
+        <Card>
+          <CardContent className="p-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
-                <label htmlFor="student-filter" className="block text-sm font-medium text-gray-700">Student</label>
-                <Select 
-                  value={studentFilter} 
-                  onValueChange={handleStudentSelect}
-                  disabled={studentsLoading}
+                <label htmlFor="student-filter" className="block text-sm font-medium text-gray-700 mb-1">
+                  Student
+                </label>
+                <Select
+                  value={filters.student}
+                  onValueChange={(value) => setFilters({ ...filters, student: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="student-filter">
                     <SelectValue placeholder="All Students" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Students</SelectItem>
-                    {filteredStudents?.map((student: Student) => (
-                      <SelectItem key={student.id} value={String(student.id)}>
-                        {student.name} ({student.class})
+                    {students.map((student) => (
+                      <SelectItem key={student.id} value={student.id.toString()}>
+                        {student.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -170,67 +247,58 @@ export default function ProgressPage() {
               </div>
               
               <div>
-                <label htmlFor="class-filter-progress" className="block text-sm font-medium text-gray-700">Class</label>
-                <Select 
-                  value={classFilter} 
-                  onValueChange={setClassFilter}
+                <label htmlFor="class-filter-progress" className="block text-sm font-medium text-gray-700 mb-1">
+                  Class
+                </label>
+                <Select
+                  value={filters.class}
+                  onValueChange={(value) => setFilters({ ...filters, class: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="class-filter-progress">
                     <SelectValue placeholder="All Classes" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Classes</SelectItem>
-                    {classOptions.map((cls) => (
-                      <SelectItem key={cls} value={cls}>{cls}</SelectItem>
-                    ))}
+                    <SelectItem value="Nursery">Nursery</SelectItem>
+                    <SelectItem value="LKG">LKG</SelectItem>
+                    <SelectItem value="UKG">UKG</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               
               <div>
-                <label htmlFor="date-filter" className="block text-sm font-medium text-gray-700">Date</label>
+                <label htmlFor="date-filter" className="block text-sm font-medium text-gray-700 mb-1">
+                  Date
+                </label>
                 <Input
-                  type="date"
                   id="date-filter"
-                  value={dateFilter}
-                  onChange={(e) => setDateFilter(e.target.value)}
+                  type="date"
+                  value={filters.date}
+                  onChange={(e) => setFilters({ ...filters, date: e.target.value })}
                 />
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Progress Entries List */}
+        <Card>
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg font-medium text-gray-900">Progress Entries</h3>
+            <Badge variant="secondary" className="bg-purple-100 text-purple-800">
+              {filteredProgress.length} Total
+            </Badge>
           </div>
           
-          {/* Progress Entries List */}
-          <ProgressList 
-            progressEntries={filteredProgressEntries || []} 
-            students={students || []}
-            isLoading={progressLoading || studentsLoading}
-            onEdit={handleEditProgress}
-            onRefresh={refetch}
-          />
-          
-          {/* Add/Edit Progress Dialog */}
-          <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
-            <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingProgress ? 'Edit Progress Entry' : 'Record Student Progress'}
-                </DialogTitle>
-                <DialogDescription>
-                  {editingProgress 
-                    ? 'Update the progress information below.' 
-                    : 'Fill out the form below to record new progress.'}
-                </DialogDescription>
-              </DialogHeader>
-              <ProgressForm 
-                progress={editingProgress}
-                student={selectedStudent || undefined}
-                students={students || []}
-                onClose={handleCloseForm}
-              />
-            </DialogContent>
-          </Dialog>
-        </main>
+          <div className="px-4 py-4">
+            <DataTable
+              data={filteredProgress}
+              columns={columns}
+              searchKeys={["studentId"]}
+            />
+          </div>
+        </Card>
       </div>
-    </div>
+    </AppLayout>
   );
 }

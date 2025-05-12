@@ -1,123 +1,166 @@
-import { useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card } from "@/components/ui/card";
-import { Upload, X, User } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Camera, ImagePlus, RefreshCw, Trash2 } from "lucide-react";
+import { createUploadWidget, formatCloudinaryUrl } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface PhotoUploadProps {
-  initialPhotoUrl?: string;
-  onPhotoChange: (file: File | null) => void;
-  studentName?: string;
+  photoUrl?: string;
+  onChange: (url: string, publicId: string) => void;
+  onError?: (error: string) => void;
+  className?: string;
+  defaultImage?: string;
+  width?: number;
+  height?: number;
 }
 
-export function PhotoUpload({ initialPhotoUrl, onPhotoChange, studentName }: PhotoUploadProps) {
-  const [photoUrl, setPhotoUrl] = useState<string | undefined>(initialPhotoUrl);
-  const [file, setFile] = useState<File | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const { toast } = useToast();
+export function PhotoUpload({
+  photoUrl,
+  onChange,
+  onError,
+  className = "",
+  defaultImage = "",
+  width = 120,
+  height = 120,
+}: PhotoUploadProps) {
+  const [url, setUrl] = useState<string | undefined>(photoUrl);
+  const [isLoading, setIsLoading] = useState(false);
+  const [cloudinaryWidget, setCloudinaryWidget] = useState<any>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
+  // Initialize Cloudinary widget
+  useEffect(() => {
+    // Check if Cloudinary script is loaded
+    if (typeof window !== "undefined" && "cloudinary" in window) {
+      initWidget();
+    } else {
+      // Load Cloudinary script if not already loaded
+      const script = document.createElement("script");
+      script.src = "https://upload-widget.cloudinary.com/global/all.js";
+      script.async = true;
+      script.onload = initWidget;
+      document.body.appendChild(script);
+    }
+
+    return () => {
+      // Cleanup widget
+      if (cloudinaryWidget) {
+        try {
+          cloudinaryWidget.destroy();
+        } catch (error) {
+          console.error("Error destroying Cloudinary widget:", error);
+        }
+      }
+    };
+  }, []);
+
+  // Update URL if photoUrl prop changes
+  useEffect(() => {
+    setUrl(photoUrl);
+  }, [photoUrl]);
+
+  const initWidget = () => {
+    // @ts-ignore - Cloudinary is loaded via script
+    if (!window.cloudinary) {
+      setTimeout(initWidget, 500); // Try again in 500ms
+      return;
+    }
+
+    const widget = createUploadWidget(
+      (error, result) => {
+        setIsLoading(false);
+        
+        if (error) {
+          console.error("Cloudinary upload error:", error);
+          onError?.(error.message || "Upload failed");
+          return;
+        }
+        
+        if (result.event === "success") {
+          const { secure_url, public_id } = result.info;
+          setUrl(secure_url);
+          onChange(secure_url, public_id);
+        }
+      },
+      {
+        maxFiles: 1,
+        maxFileSize: 1, // 1MB
+        folder: "students",
+      }
+    );
     
-    if (!selectedFile) return;
-    
-    // Validate file type
-    if (!['image/jpeg', 'image/png'].includes(selectedFile.type)) {
-      toast({
-        title: "Invalid file type",
-        description: "Please upload a JPEG or PNG image.",
-        variant: "destructive",
-      });
+    setCloudinaryWidget(widget);
+  };
+
+  const handleUploadClick = () => {
+    if (!cloudinaryWidget) {
+      onError?.("Upload widget is not ready. Please try again.");
       return;
     }
     
-    // Validate file size (1MB max)
-    if (selectedFile.size > 1024 * 1024) {
-      toast({
-        title: "File too large",
-        description: "Please upload an image smaller than 1MB.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    // Create temporary URL for preview
-    const previewUrl = URL.createObjectURL(selectedFile);
-    setPhotoUrl(previewUrl);
-    setFile(selectedFile);
-    onPhotoChange(selectedFile);
+    setIsLoading(true);
+    cloudinaryWidget.open();
   };
 
   const handleRemovePhoto = () => {
-    setPhotoUrl(undefined);
-    setFile(null);
-    if (inputRef.current) {
-      inputRef.current.value = '';
-    }
-    onPhotoChange(null);
+    setUrl(undefined);
+    onChange("", "");
   };
 
-  const handleClickUpload = () => {
-    inputRef.current?.click();
-  };
-
-  // Generate initials for avatar fallback
-  const getInitials = () => {
-    if (!studentName) return "S";
-    return studentName
-      .split(' ')
-      .map(name => name[0])
-      .join('')
-      .toUpperCase()
-      .substring(0, 2);
-  };
+  // Format URL with Cloudinary transformations if it's a Cloudinary URL
+  const optimizedUrl = url 
+    ? formatCloudinaryUrl(url, { width, height }) 
+    : defaultImage;
 
   return (
-    <div className="flex flex-col items-center">
-      <input
-        type="file"
-        accept="image/jpeg, image/png"
-        className="hidden"
-        ref={inputRef}
-        onChange={handleFileChange}
-      />
-      
-      <Card className="relative w-32 h-32 flex items-center justify-center mb-2 p-0 overflow-hidden">
-        <Avatar className="w-full h-full rounded-none">
-          <AvatarImage 
-            src={photoUrl} 
-            alt="Student photo" 
-            className="object-cover"
-          />
-          <AvatarFallback className="text-2xl bg-purple-100 text-purple-600 rounded-none">
-            {getInitials()}
-          </AvatarFallback>
-        </Avatar>
-        
-        {photoUrl && (
-          <button
-            type="button"
-            onClick={handleRemovePhoto}
-            className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow-sm"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </Card>
-      
-      <Button 
-        type="button" 
-        variant="outline" 
-        size="sm"
-        className="mt-2"
-        onClick={handleClickUpload}
+    <div className={`flex flex-col items-center gap-2 ${className}`}>
+      <div 
+        className="relative overflow-hidden rounded-full border-2 border-gray-200"
+        style={{ width: `${width}px`, height: `${height}px` }}
       >
-        <Upload className="h-4 w-4 mr-2" />
-        {photoUrl ? "Change Photo" : "Upload Photo"}
-      </Button>
+        {isLoading ? (
+          <Skeleton className="w-full h-full rounded-full" />
+        ) : optimizedUrl ? (
+          <img
+            src={optimizedUrl}
+            alt="Uploaded photo"
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+            <Camera className="h-1/3 w-1/3 text-gray-400" />
+          </div>
+        )}
+      </div>
       
-      <p className="text-xs text-gray-500 mt-1">JPEG or PNG, max 1MB</p>
+      <div className="flex flex-wrap gap-2 justify-center">
+        <Button 
+          type="button" 
+          variant="outline" 
+          size="sm" 
+          onClick={handleUploadClick}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+          ) : (
+            <ImagePlus className="h-4 w-4 mr-1" />
+          )}
+          {url ? "Change" : "Upload"}
+        </Button>
+        
+        {url && (
+          <Button 
+            type="button" 
+            variant="outline" 
+            size="sm"
+            onClick={handleRemovePhoto}
+            className="text-red-500 hover:text-red-700"
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Remove
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

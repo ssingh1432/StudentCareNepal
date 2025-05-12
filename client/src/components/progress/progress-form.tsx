@@ -1,219 +1,224 @@
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { InsertProgress, insertProgressSchema } from "@shared/schema";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
+import { insertProgressEntrySchema, ProgressEntry, Student } from "@shared/schema";
+import { useQuery } from "@tanstack/react-query";
 
+import { Button } from "@/components/ui/button";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { format } from "date-fns";
-import { CalendarIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
-
-// Extend the progress schema for the form
-const progressFormSchema = insertProgressSchema.extend({
-  date: z.date().default(new Date()),
-});
-
-type ProgressFormValues = z.infer<typeof progressFormSchema>;
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 
 interface ProgressFormProps {
-  open: boolean;
-  onClose: () => void;
+  initialData?: Partial<ProgressEntry>;
   studentId?: number;
-  editingProgress?: { id: number } & Partial<InsertProgress>;
+  onSuccess?: () => void;
+  onCancel?: () => void;
+  isEditMode?: boolean;
 }
 
-export function ProgressForm({ 
-  open, 
-  onClose, 
-  studentId, 
-  editingProgress 
+export function ProgressForm({
+  initialData,
+  studentId,
+  onSuccess,
+  onCancel,
+  isEditMode = false,
 }: ProgressFormProps) {
   const { toast } = useToast();
-  const [, navigate] = useLocation();
-  
-  // Fetch available students if studentId is not provided
-  const { data: students } = useQuery({
-    queryKey: ['/api/students'],
-    enabled: open && !studentId,
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedStudentId, setSelectedStudentId] = useState<number | undefined>(
+    studentId || initialData?.studentId
+  );
+
+  const { data: students = [] } = useQuery<Student[]>({
+    queryKey: ["/api/students"],
   });
-  
-  // Fetch student data if studentId is provided
-  const { data: student } = useQuery({
-    queryKey: ['/api/students', studentId],
-    enabled: open && !!studentId,
+
+  const { data: student } = useQuery<Student>({
+    queryKey: [`/api/students/${selectedStudentId}`],
+    enabled: !!selectedStudentId,
   });
-  
-  // Form initialization
-  const form = useForm<ProgressFormValues>({
-    resolver: zodResolver(progressFormSchema),
+
+  // Get today's date in YYYY-MM-DD format
+  const today = new Date().toISOString().slice(0, 10);
+
+  const form = useForm({
+    resolver: zodResolver(insertProgressEntrySchema),
     defaultValues: {
-      studentId: studentId || editingProgress?.studentId || 0,
-      date: editingProgress?.date ? new Date(editingProgress.date) : new Date(),
-      socialSkills: editingProgress?.socialSkills || "Good",
-      preLiteracy: editingProgress?.preLiteracy || "Good",
-      preNumeracy: editingProgress?.preNumeracy || "Good",
-      motorSkills: editingProgress?.motorSkills || "Good",
-      emotionalDevelopment: editingProgress?.emotionalDevelopment || "Good",
-      comments: editingProgress?.comments || "",
+      studentId: initialData?.studentId || studentId,
+      date: initialData?.date ? new Date(initialData.date).toISOString().slice(0, 10) : today,
+      socialSkills: initialData?.socialSkills || "good",
+      preLiteracy: initialData?.preLiteracy || "good",
+      preNumeracy: initialData?.preNumeracy || "good",
+      motorSkills: initialData?.motorSkills || "good",
+      emotionalDevelopment: initialData?.emotionalDevelopment || "good",
+      comments: initialData?.comments || "",
     },
   });
-  
-  // Update form when student is selected
+
+  // Update the form when studentId changes
   useEffect(() => {
-    if (studentId) {
+    if (studentId && studentId !== form.getValues().studentId) {
       form.setValue("studentId", studentId);
+      setSelectedStudentId(studentId);
     }
   }, [studentId, form]);
-  
-  // Create/update progress mutation
-  const mutation = useMutation({
-    mutationFn: async (values: ProgressFormValues) => {
-      if (editingProgress?.id) {
-        return await apiRequest("PUT", `/api/progress/${editingProgress.id}`, values);
+
+  const onSubmit = async (data: any) => {
+    setIsLoading(true);
+    try {
+      // Format date to ISO string
+      const formattedData = {
+        ...data,
+        date: new Date(data.date).toISOString(),
+      };
+
+      if (isEditMode && initialData?.id) {
+        // Update existing progress entry
+        await apiRequest("PATCH", `/api/progress/${initialData.id}`, formattedData);
+        toast({
+          title: "Progress updated",
+          description: "The progress entry has been updated successfully",
+        });
       } else {
-        return await apiRequest("POST", "/api/progress", values);
+        // Create new progress entry
+        await apiRequest("POST", "/api/progress", formattedData);
+        toast({
+          title: "Progress recorded",
+          description: "The progress entry has been recorded successfully",
+        });
       }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/progress'] });
-      toast({
-        title: editingProgress ? "Progress Updated" : "Progress Recorded",
-        description: `Student progress has been ${editingProgress ? "updated" : "recorded"} successfully.`,
-      });
-      onClose();
+
+      // Invalidate relevant queries
+      if (selectedStudentId) {
+        queryClient.invalidateQueries({ queryKey: [`/api/students/${selectedStudentId}/progress`] });
+      }
       
-      // Navigate back to progress page if editing from another view
-      if (window.location.pathname !== "/progress") {
-        navigate("/progress");
-      }
-    },
-    onError: (error) => {
+      // Call success callback
+      if (onSuccess) onSuccess();
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || "Something went wrong",
         variant: "destructive",
       });
-    },
-  });
-  
-  const onSubmit = (values: ProgressFormValues) => {
-    mutation.mutate(values);
+    } finally {
+      setIsLoading(false);
+    }
   };
-  
-  const selectedStudentName = students?.find(s => s.id === form.getValues().studentId)?.name || 
-                              student?.name || 
-                              "Selected Student";
-  
+
+  const handleStudentChange = (studentId: string) => {
+    const id = parseInt(studentId, 10);
+    form.setValue("studentId", id);
+    setSelectedStudentId(id);
+  };
+
+  const formatEnumValue = (value: string): string => {
+    return value
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>
-            {editingProgress 
-              ? "Edit Progress Entry" 
-              : `Record Progress for ${selectedStudentName}`}
-          </DialogTitle>
-        </DialogHeader>
-        
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            {!studentId && !editingProgress && (
-              <FormField
-                control={form.control}
-                name="studentId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Student</FormLabel>
-                    <Select
-                      onValueChange={(value) => field.onChange(parseInt(value))}
-                      defaultValue={field.value?.toString()}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a student" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {students?.map((student) => (
-                          <SelectItem key={student.id} value={student.id.toString()}>
-                            {student.name} ({student.class})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
-            
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-6">
             <FormField
               control={form.control}
-              name="date"
+              name="studentId"
               render={({ field }) => (
-                <FormItem className="flex flex-col">
-                  <FormLabel>Date</FormLabel>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <FormControl>
-                        <Button
-                          variant={"outline"}
-                          className={cn(
-                            "w-full pl-3 text-left font-normal",
-                            !field.value && "text-muted-foreground"
-                          )}
-                        >
-                          {field.value ? (
-                            format(field.value, "PPP")
-                          ) : (
-                            <span>Pick a date</span>
-                          )}
-                          <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                        </Button>
-                      </FormControl>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={field.value}
-                        onSelect={field.onChange}
-                        disabled={(date) =>
-                          date > new Date() || date < new Date("1900-01-01")
-                        }
-                        initialFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
+                <FormItem>
+                  <FormLabel>Student</FormLabel>
+                  <Select
+                    onValueChange={handleStudentChange}
+                    defaultValue={field.value?.toString()}
+                    disabled={!!studentId || isEditMode}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select student" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {students.map((student) => (
+                        <SelectItem key={student.id} value={student.id.toString()}>
+                          {student.name} ({student.classType.toUpperCase()})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
+
+            {student && (
+              <div className="p-4 bg-gray-50 rounded-md">
+                <h3 className="text-sm font-medium mb-2">Student Details</h3>
+                <div className="flex items-center mb-2">
+                  {student.photoUrl ? (
+                    <img
+                      src={student.photoUrl}
+                      alt={student.name}
+                      className="h-10 w-10 rounded-full object-cover mr-3"
+                    />
+                  ) : (
+                    <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center mr-3">
+                      <span className="text-purple-600 font-medium">
+                        {student.name.substring(0, 2).toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-sm font-medium">{student.name}</p>
+                    <div className="flex items-center gap-1 mt-1">
+                      <Badge variant={student.classType as any} className="text-xs">
+                        {student.classType.toUpperCase()}
+                      </Badge>
+                      <Badge variant={student.learningAbility as any} className="text-xs">
+                        {formatEnumValue(student.learningAbility)}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <FormField
+              control={form.control}
+              name="date"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Date</FormLabel>
+                  <FormControl>
+                    <Input type="date" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <div className="space-y-6">
             <FormField
               control={form.control}
               name="socialSkills"
@@ -230,16 +235,16 @@ export function ProgressForm({
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
+                      <SelectItem value="excellent">Excellent</SelectItem>
+                      <SelectItem value="good">Good</SelectItem>
+                      <SelectItem value="needs_improvement">Needs Improvement</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
+
             <FormField
               control={form.control}
               name="preLiteracy"
@@ -256,16 +261,16 @@ export function ProgressForm({
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
+                      <SelectItem value="excellent">Excellent</SelectItem>
+                      <SelectItem value="good">Good</SelectItem>
+                      <SelectItem value="needs_improvement">Needs Improvement</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
+
             <FormField
               control={form.control}
               name="preNumeracy"
@@ -282,111 +287,101 @@ export function ProgressForm({
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
+                      <SelectItem value="excellent">Excellent</SelectItem>
+                      <SelectItem value="good">Good</SelectItem>
+                      <SelectItem value="needs_improvement">Needs Improvement</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
-            <FormField
-              control={form.control}
-              name="motorSkills"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Motor Skills</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    defaultValue={field.value}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select rating" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="emotionalDevelopment"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Emotional Development</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    defaultValue={field.value}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select rating" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="Excellent">Excellent</SelectItem>
-                      <SelectItem value="Good">Good</SelectItem>
-                      <SelectItem value="Needs Improvement">Needs Improvement</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <FormField
-              control={form.control}
-              name="comments"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Comments (Optional)</FormLabel>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <FormField
+            control={form.control}
+            name="motorSkills"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Motor Skills</FormLabel>
+                <Select
+                  onValueChange={field.onChange}
+                  defaultValue={field.value}
+                >
                   <FormControl>
-                    <Textarea 
-                      placeholder="Add any additional comments" 
-                      className="h-20"
-                      {...field} 
-                    />
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select rating" />
+                    </SelectTrigger>
                   </FormControl>
-                  <FormDescription>
-                    Add any specific observations or notes about the student's progress.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onClose}
-                disabled={mutation.isPending}
-              >
-                Cancel
-              </Button>
-              <Button 
-                type="submit" 
-                disabled={mutation.isPending}
-              >
-                {mutation.isPending ? 
-                  (editingProgress ? "Updating..." : "Saving...") : 
-                  (editingProgress ? "Update Progress" : "Save Progress")
-                }
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+                  <SelectContent>
+                    <SelectItem value="excellent">Excellent</SelectItem>
+                    <SelectItem value="good">Good</SelectItem>
+                    <SelectItem value="needs_improvement">Needs Improvement</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="emotionalDevelopment"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Emotional Development</FormLabel>
+                <Select
+                  onValueChange={field.onChange}
+                  defaultValue={field.value}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select rating" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="excellent">Excellent</SelectItem>
+                    <SelectItem value="good">Good</SelectItem>
+                    <SelectItem value="needs_improvement">Needs Improvement</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <FormField
+          control={form.control}
+          name="comments"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Comments (Optional)</FormLabel>
+              <FormControl>
+                <Textarea
+                  placeholder="Add any additional comments about the student's progress"
+                  className="resize-none"
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <div className="flex justify-end space-x-4">
+          {onCancel && (
+            <Button variant="outline" type="button" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" disabled={isLoading}>
+            {isLoading ? "Saving..." : isEditMode ? "Update Progress" : "Save Progress"}
+          </Button>
+        </div>
+      </form>
+    </Form>
   );
 }

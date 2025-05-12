@@ -1,21 +1,45 @@
+import { ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { LucideIcon } from "lucide-react";
 
 interface StatCardProps {
   title: string;
-  value: number | string;
-  icon: LucideIcon;
-  iconColor: string;
-  iconBgColor: string;
+  value: string | number;
+  icon: string;
+  color: "purple" | "blue" | "green" | "yellow" | "red";
 }
 
-const StatCard = ({ title, value, icon: Icon, iconColor, iconBgColor }: StatCardProps) => {
+const colorClasses = {
+  purple: {
+    bg: "bg-purple-100",
+    text: "text-purple-600"
+  },
+  blue: {
+    bg: "bg-blue-100",
+    text: "text-blue-600"
+  },
+  green: {
+    bg: "bg-green-100",
+    text: "text-green-600"
+  },
+  yellow: {
+    bg: "bg-yellow-100",
+    text: "text-yellow-600"
+  },
+  red: {
+    bg: "bg-red-100",
+    text: "text-red-600"
+  }
+};
+
+export default function StatCard({ title, value, icon, color }: StatCardProps) {
+  const { bg, text } = colorClasses[color];
+
   return (
-    <Card className="bg-white overflow-hidden shadow rounded-lg">
+    <Card>
       <CardContent className="px-4 py-5 sm:p-6">
         <div className="flex items-center">
-          <div className={`flex-shrink-0 rounded-md p-3 ${iconBgColor}`}>
-            <Icon className={`h-6 w-6 ${iconColor}`} />
+          <div className={`flex-shrink-0 ${bg} rounded-md p-3`}>
+            <i className={`fas ${icon} ${text}`}></i>
           </div>
           <div className="ml-5 w-0 flex-1">
             <dl>
@@ -29,6 +53,4 @@ const StatCard = ({ title, value, icon: Icon, iconColor, iconBgColor }: StatCard
       </CardContent>
     </Card>
   );
-};
-
-export default StatCard;
+}

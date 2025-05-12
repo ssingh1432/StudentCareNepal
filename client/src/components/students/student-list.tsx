@@ -1,190 +1,294 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Edit, Trash, Filter, PlusCircle } from "lucide-react";
 import { Student } from "@shared/schema";
-import { useAuth } from "@/hooks/use-auth";
-import { StudentForm } from "./student-form";
-import { StudentCard } from "./student-card";
-import { Badge } from "@/components/ui/badge";
+
+import { DataTable } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { Search, UserPlus, UsersRound } from "lucide-react";
+import { StudentForm } from "@/components/students/student-form";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 
 export function StudentList() {
-  const { isAdmin } = useAuth();
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const [addStudentOpen, setAddStudentOpen] = useState(false);
+  const [editStudentData, setEditStudentData] = useState<Student | null>(null);
+  const [deleteStudentId, setDeleteStudentId] = useState<number | null>(null);
   const [classFilter, setClassFilter] = useState<string>("all");
-  const [teacherFilter, setTeacherFilter] = useState<string>("all");
   const [abilityFilter, setAbilityFilter] = useState<string>("all");
-  const [searchTerm, setSearchTerm] = useState<string>("");
-  const [showAddStudentForm, setShowAddStudentForm] = useState(false);
-  const [editingStudent, setEditingStudent] = useState<(Student & { id: number }) | null>(null);
-  
-  // Fetch teachers (for admin filter)
-  const { data: teachers } = useQuery({
-    queryKey: ['/api/teachers'],
-    enabled: isAdmin,
+
+  const queryParams = new URLSearchParams();
+  if (classFilter !== "all") {
+    queryParams.append("classType", classFilter);
+  }
+  if (abilityFilter !== "all") {
+    queryParams.append("learningAbility", abilityFilter);
+  }
+
+  const { data: students = [], isLoading } = useQuery<Student[]>({
+    queryKey: [`/api/students?${queryParams.toString()}`],
   });
-  
-  // Fetch students with filters
-  const { data: students, isLoading } = useQuery<Student[]>({
-    queryKey: [
-      '/api/students', 
-      classFilter !== "all" ? classFilter : undefined,
-      teacherFilter !== "all" && isAdmin ? parseInt(teacherFilter) : undefined,
-      abilityFilter !== "all" ? abilityFilter : undefined
-    ],
-  });
-  
-  // Apply search filter client-side
-  const filteredStudents = students?.filter(student => {
-    if (!searchTerm) return true;
-    return student.name.toLowerCase().includes(searchTerm.toLowerCase());
-  });
-  
-  const handleEditStudent = (student: Student & { id: number }) => {
-    setEditingStudent(student);
+
+  const handleDeleteStudent = async () => {
+    if (!deleteStudentId) return;
+
+    try {
+      await apiRequest("DELETE", `/api/students/${deleteStudentId}`);
+      
+      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
+      
+      toast({
+        title: "Student deleted",
+        description: "The student has been deleted successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete student",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteStudentId(null);
+    }
   };
-  
+
+  const formatEnumValue = (value: string): string => {
+    return value
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  };
+
+  const columns = [
+    {
+      accessorKey: "name",
+      header: "Student",
+      cell: ({ row }) => {
+        const student = row.original;
+        return (
+          <div className="flex items-center">
+            <div className="flex-shrink-0 h-10 w-10">
+              {student.photoUrl ? (
+                <img
+                  className="h-10 w-10 rounded-full object-cover"
+                  src={student.photoUrl}
+                  alt={student.name}
+                />
+              ) : (
+                <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
+                  <span className="text-purple-600 font-medium">
+                    {student.name.substring(0, 2).toUpperCase()}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div className="ml-4">
+              <div className="text-sm font-medium text-gray-900">
+                {student.name}
+              </div>
+              <div className="text-sm text-gray-500">
+                {student.parentContact && `Parent: ${student.parentContact}`}
+              </div>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "classType",
+      header: "Class",
+      cell: ({ row }) => {
+        const classType = row.getValue("classType") as string;
+        return <Badge variant={classType as any}>{classType.toUpperCase()}</Badge>;
+      },
+    },
+    {
+      accessorKey: "age",
+      header: "Age",
+      cell: ({ row }) => {
+        const age = row.getValue("age") as number;
+        return <span>{age} years</span>;
+      },
+    },
+    {
+      accessorKey: "learningAbility",
+      header: "Learning Ability",
+      cell: ({ row }) => {
+        const ability = row.getValue("learningAbility") as string;
+        return <Badge variant={ability as any}>{formatEnumValue(ability)}</Badge>;
+      },
+    },
+    {
+      accessorKey: "writingSpeed",
+      header: "Writing Speed",
+      cell: ({ row }) => {
+        const speed = row.getValue("writingSpeed") as string;
+        if (speed === "not_applicable") {
+          return <span className="text-gray-500">N/A</span>;
+        }
+        return <Badge variant={speed === "speed_writing" ? "excellent" : "needs_improvement"}>{formatEnumValue(speed)}</Badge>;
+      },
+    },
+    {
+      id: "actions",
+      cell: ({ row }) => {
+        const student = row.original;
+        return (
+          <div className="flex items-center space-x-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setEditStudentData(student)}
+              title="Edit Student"
+            >
+              <Edit className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setDeleteStudentId(student.id)}
+              title="Delete Student"
+            >
+              <Trash className="h-4 w-4 text-red-500" />
+            </Button>
+          </div>
+        );
+      },
+    },
+  ];
+
+  // Custom filter component for the data table
+  const filters = (
+    <div className="flex flex-wrap gap-2">
+      <Select value={classFilter} onValueChange={setClassFilter}>
+        <SelectTrigger className="w-[150px]">
+          <SelectValue placeholder="Class" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Classes</SelectItem>
+          <SelectItem value="nursery">Nursery</SelectItem>
+          <SelectItem value="lkg">LKG</SelectItem>
+          <SelectItem value="ukg">UKG</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <Select value={abilityFilter} onValueChange={setAbilityFilter}>
+        <SelectTrigger className="w-[180px]">
+          <SelectValue placeholder="Learning Ability" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Abilities</SelectItem>
+          <SelectItem value="talented">Talented</SelectItem>
+          <SelectItem value="average">Average</SelectItem>
+          <SelectItem value="slow_learner">Slow Learner</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Student Management</h2>
-        <Button onClick={() => setShowAddStudentForm(true)}>
-          <UserPlus className="mr-2 h-4 w-4" />
-          Add Student
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-semibold">Students</h2>
+        <Button onClick={() => setAddStudentOpen(true)}>
+          <PlusCircle className="mr-2 h-4 w-4" /> Add Student
         </Button>
       </div>
-      
-      {/* Filter controls */}
-      <div className="bg-white p-4 shadow rounded-lg mb-6">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <label htmlFor="class-filter" className="block text-sm font-medium text-gray-700 mb-1">Class</label>
-            <Select 
-              value={classFilter} 
-              onValueChange={setClassFilter}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="All Classes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Classes</SelectItem>
-                <SelectItem value="Nursery">Nursery</SelectItem>
-                <SelectItem value="LKG">LKG</SelectItem>
-                <SelectItem value="UKG">UKG</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          <div>
-            <label htmlFor="ability-filter" className="block text-sm font-medium text-gray-700 mb-1">Learning Ability</label>
-            <Select 
-              value={abilityFilter} 
-              onValueChange={setAbilityFilter}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="All Abilities" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Abilities</SelectItem>
-                <SelectItem value="Talented">Talented</SelectItem>
-                <SelectItem value="Average">Average</SelectItem>
-                <SelectItem value="Slow Learner">Slow Learner</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          {isAdmin && (
-            <div>
-              <label htmlFor="teacher-filter" className="block text-sm font-medium text-gray-700 mb-1">Teacher</label>
-              <Select 
-                value={teacherFilter} 
-                onValueChange={setTeacherFilter}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="All Teachers" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Teachers</SelectItem>
-                  {teachers?.map(teacher => (
-                    <SelectItem key={teacher.id} value={teacher.id.toString()}>
-                      {teacher.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+
+      <DataTable
+        columns={columns}
+        data={students}
+        searchKey="name"
+        filters={filters}
+      />
+
+      {/* Add Student Dialog */}
+      <Dialog open={addStudentOpen} onOpenChange={setAddStudentOpen}>
+        <DialogContent className="sm:max-w-[800px]">
+          <DialogHeader>
+            <DialogTitle>Add New Student</DialogTitle>
+            <DialogDescription>
+              Create a new student record with all relevant information.
+            </DialogDescription>
+          </DialogHeader>
+          <StudentForm
+            onSuccess={() => setAddStudentOpen(false)}
+            onCancel={() => setAddStudentOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Student Dialog */}
+      <Dialog
+        open={!!editStudentData}
+        onOpenChange={(open) => !open && setEditStudentData(null)}
+      >
+        <DialogContent className="sm:max-w-[800px]">
+          <DialogHeader>
+            <DialogTitle>Edit Student</DialogTitle>
+            <DialogDescription>
+              Update student information and details.
+            </DialogDescription>
+          </DialogHeader>
+          {editStudentData && (
+            <StudentForm
+              initialData={editStudentData}
+              isEditMode={true}
+              onSuccess={() => setEditStudentData(null)}
+              onCancel={() => setEditStudentData(null)}
+            />
           )}
-          
-          <div>
-            <label htmlFor="search-filter" className="block text-sm font-medium text-gray-700 mb-1">Search</label>
-            <div className="relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
-              <Input 
-                id="search-filter"
-                placeholder="Student name" 
-                className="pl-8"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      {/* Students list */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">Students</h3>
-          <Badge variant="purple" className="px-3 py-1">
-            {isLoading ? "Loading..." : `${filteredStudents?.length || 0} Total`}
-          </Badge>
-        </div>
-        
-        {isLoading ? (
-          <div className="p-8 text-center">
-            <UsersRound className="mx-auto h-12 w-12 text-gray-400 animate-pulse" />
-            <p className="mt-4 text-gray-500">Loading students...</p>
-          </div>
-        ) : filteredStudents?.length === 0 ? (
-          <div className="p-8 text-center">
-            <UsersRound className="mx-auto h-12 w-12 text-gray-400" />
-            <p className="mt-4 text-gray-500">No students found matching the filters.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 p-6">
-            {filteredStudents?.map(student => (
-              <StudentCard 
-                key={student.id} 
-                student={student} 
-                onEdit={() => handleEditStudent(student as Student & { id: number })}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-      
-      {/* Add/Edit student form */}
-      {showAddStudentForm && (
-        <StudentForm 
-          open={showAddStudentForm} 
-          onClose={() => setShowAddStudentForm(false)} 
-        />
-      )}
-      
-      {editingStudent && (
-        <StudentForm 
-          open={!!editingStudent} 
-          onClose={() => setEditingStudent(null)} 
-          editingStudent={editingStudent}
-        />
-      )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog
+        open={!!deleteStudentId}
+        onOpenChange={(open) => !open && setDeleteStudentId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the student record and all associated progress entries.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteStudent}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

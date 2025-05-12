@@ -1,499 +1,608 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Student, Progress, TeachingPlan } from "@shared/schema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { Student, User } from "@shared/schema";
 import { useAuth } from "@/hooks/use-auth";
-import { useToast } from "@/hooks/use-toast";
-import { generatePDF } from "@/lib/pdf-generator";
-import { generateExcel } from "@/lib/excel-generator";
 
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from "@/components/ui/select";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { format } from "date-fns";
-import { 
-  FileText, 
-  FileSpreadsheet, 
-  CalendarIcon, 
-  Check,
-  Loader2
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/hooks/use-toast";
+import { FileSpreadsheet, File, Loader2 } from "lucide-react";
+
+const studentReportSchema = z.object({
+  classType: z.string().optional(),
+  teacherId: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  includePhotos: z.boolean().default(false),
+});
+
+const planReportSchema = z.object({
+  type: z.string().optional(),
+  classType: z.string().optional(),
+});
+
+type StudentReportFormValues = z.infer<typeof studentReportSchema>;
+type PlanReportFormValues = z.infer<typeof planReportSchema>;
 
 export function ReportGenerator() {
   const { toast } = useToast();
-  const { isAdmin } = useAuth();
-  
-  // Student report state
-  const [reportClass, setReportClass] = useState<string>("all");
-  const [reportTeacher, setReportTeacher] = useState<string>("all");
-  const [startDate, setStartDate] = useState<Date | undefined>(new Date(new Date().getFullYear(), 0, 1)); // Jan 1 of current year
-  const [endDate, setEndDate] = useState<Date | undefined>(new Date());
-  const [includePhotos, setIncludePhotos] = useState(true);
-  const [isGenerating, setIsGenerating] = useState(false);
-  
-  // Plan report state
-  const [planType, setPlanType] = useState<string>("all");
-  const [planClass, setPlanClass] = useState<string>("all");
-  const [planTeacher, setPlanTeacher] = useState<string>("all");
-  const [isGeneratingPlanReport, setIsGeneratingPlanReport] = useState(false);
-  
-  // Fetch teachers for filtering (admin only)
-  const { data: teachers } = useQuery({
-    queryKey: ['/api/teachers'],
-    enabled: isAdmin,
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<string>("student-progress");
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isGeneratingExcel, setIsGeneratingExcel] = useState(false);
+
+  // Query for teachers (admin only)
+  const { data: teachers = [] } = useQuery<(User & { assignedClasses?: string[] })[]>({
+    queryKey: ["/api/teachers"],
+    enabled: user?.role === "admin",
   });
-  
-  // Fetch students
-  const { data: students } = useQuery<Student[]>({
-    queryKey: [
-      '/api/students', 
-      reportClass !== "all" ? reportClass : undefined,
-      isAdmin && reportTeacher !== "all" ? parseInt(reportTeacher) : undefined,
-    ],
+
+  // Student progress report form
+  const studentReportForm = useForm<StudentReportFormValues>({
+    resolver: zodResolver(studentReportSchema),
+    defaultValues: {
+      classType: "all",
+      teacherId: "all",
+      includePhotos: false,
+    },
   });
-  
-  // Fetch progress entries
-  const { data: progressEntries } = useQuery<Progress[]>({
-    queryKey: ['/api/progress'],
+
+  // Teaching plan report form
+  const planReportForm = useForm<PlanReportFormValues>({
+    resolver: zodResolver(planReportSchema),
+    defaultValues: {
+      type: "all",
+      classType: "all",
+    },
   });
-  
-  // Fetch teaching plans
-  const { data: teachingPlans } = useQuery<TeachingPlan[]>({
-    queryKey: [
-      '/api/teaching-plans',
-      planType !== "all" ? planType : undefined,
-      planClass !== "all" ? planClass : undefined,
-      isAdmin && planTeacher !== "all" ? parseInt(planTeacher) : undefined,
-    ],
-  });
-  
-  // Generate student progress report
-  const generateStudentReport = async (format: 'pdf' | 'excel') => {
-    if (!students || !progressEntries) {
-      toast({
-        title: "Error",
-        description: "Unable to generate report. Data is not available.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
+
+  const handleStudentReportSubmit = async (values: StudentReportFormValues, format: "pdf" | "excel") => {
     try {
-      // Set generating state based on format
-      setIsGenerating(true);
-      
-      // Filter data
-      let filteredStudents = students;
-      if (reportClass !== "all") {
-        filteredStudents = filteredStudents.filter(s => s.class === reportClass);
-      }
-      if (isAdmin && reportTeacher !== "all") {
-        filteredStudents = filteredStudents.filter(s => s.teacherId === parseInt(reportTeacher));
-      }
-      
-      let filteredProgress = progressEntries;
-      if (startDate && endDate) {
-        filteredProgress = filteredProgress.filter(p => {
-          const progressDate = new Date(p.date);
-          return progressDate >= startDate && progressDate <= endDate;
-        });
-      }
-      
-      // Prepare data for report
-      const reportData = filteredStudents.map(student => {
-        const studentProgress = filteredProgress.filter(p => p.studentId === student.id);
-        return {
-          ...student,
-          progress: studentProgress,
-        };
-      });
-      
-      // Generate report based on format
-      if (format === 'pdf') {
-        await generatePDF({
-          type: 'student',
-          data: reportData,
-          options: {
-            title: 'Student Progress Report',
-            dateRange: {
-              start: startDate,
-              end: endDate,
-            },
-            includePhotos,
-          },
-        });
+      if (format === "pdf") {
+        setIsGeneratingPdf(true);
       } else {
-        await generateExcel({
-          type: 'student',
-          data: reportData,
-          options: {
-            title: 'Student Progress Report',
-            dateRange: {
-              start: startDate,
-              end: endDate,
-            },
-          },
-        });
+        setIsGeneratingExcel(true);
       }
-      
-      toast({
-        title: "Report Generated",
-        description: `Student progress report has been generated as ${format.toUpperCase()}.`,
+
+      // Prepare the request payload
+      const payload = {
+        classType: values.classType !== "all" ? values.classType : undefined,
+        teacherId: values.teacherId !== "all" ? values.teacherId : undefined,
+        startDate: values.startDate,
+        endDate: values.endDate,
+        includePhotos: values.includePhotos,
+      };
+
+      // Make the request to generate the report
+      const response = await fetch(`/api/reports/student-progress/${format}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        credentials: "include",
       });
-    } catch (error) {
+
+      if (!response.ok) {
+        throw new Error(`Failed to generate report: ${response.statusText}`);
+      }
+
+      // Get the blob from the response
+      const blob = await response.blob();
+
+      // Create a URL for the blob
+      const url = window.URL.createObjectURL(blob);
+
+      // Create an anchor element and trigger a download
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `student-progress-report.${format}`;
+      document.body.appendChild(a);
+      a.click();
+
+      // Clean up
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
       toast({
-        title: "Error",
-        description: `Failed to generate ${format.toUpperCase()} report: ${error.message}`,
+        title: "Report generated",
+        description: `The ${format.toUpperCase()} report has been generated and downloaded.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error generating report",
+        description: error.message || "An error occurred while generating the report.",
         variant: "destructive",
       });
     } finally {
-      setIsGenerating(false);
+      if (format === "pdf") {
+        setIsGeneratingPdf(false);
+      } else {
+        setIsGeneratingExcel(false);
+      }
     }
   };
-  
-  // Generate teaching plan report
-  const generatePlanReport = async (format: 'pdf' | 'excel') => {
-    if (!teachingPlans) {
-      toast({
-        title: "Error",
-        description: "Unable to generate report. Data is not available.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
+
+  const handlePlanReportSubmit = async (values: PlanReportFormValues, format: "pdf" | "excel") => {
     try {
-      // Set generating state
-      setIsGeneratingPlanReport(true);
-      
-      // Filter teaching plans
-      let filteredPlans = teachingPlans;
-      if (planType !== "all") {
-        filteredPlans = filteredPlans.filter(p => p.type === planType);
-      }
-      if (planClass !== "all") {
-        filteredPlans = filteredPlans.filter(p => p.class === planClass);
-      }
-      if (isAdmin && planTeacher !== "all") {
-        filteredPlans = filteredPlans.filter(p => p.teacherId === parseInt(planTeacher));
-      }
-      
-      // Generate report based on format
-      if (format === 'pdf') {
-        await generatePDF({
-          type: 'plan',
-          data: filteredPlans,
-          options: {
-            title: 'Teaching Plans Report',
-          },
-        });
+      if (format === "pdf") {
+        setIsGeneratingPdf(true);
       } else {
-        await generateExcel({
-          type: 'plan',
-          data: filteredPlans,
-          options: {
-            title: 'Teaching Plans Report',
-          },
-        });
+        setIsGeneratingExcel(true);
       }
-      
-      toast({
-        title: "Report Generated",
-        description: `Teaching plans report has been generated as ${format.toUpperCase()}.`,
+
+      // Prepare the request payload
+      const payload = {
+        type: values.type !== "all" ? values.type : undefined,
+        classType: values.classType !== "all" ? values.classType : undefined,
+      };
+
+      // Make the request to generate the report
+      const response = await fetch(`/api/reports/teaching-plans/${format}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        credentials: "include",
       });
-    } catch (error) {
+
+      if (!response.ok) {
+        throw new Error(`Failed to generate report: ${response.statusText}`);
+      }
+
+      // Get the blob from the response
+      const blob = await response.blob();
+
+      // Create a URL for the blob
+      const url = window.URL.createObjectURL(blob);
+
+      // Create an anchor element and trigger a download
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `teaching-plans-report.${format}`;
+      document.body.appendChild(a);
+      a.click();
+
+      // Clean up
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
       toast({
-        title: "Error",
-        description: `Failed to generate ${format.toUpperCase()} report: ${error.message}`,
+        title: "Report generated",
+        description: `The ${format.toUpperCase()} report has been generated and downloaded.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error generating report",
+        description: error.message || "An error occurred while generating the report.",
         variant: "destructive",
       });
     } finally {
-      setIsGeneratingPlanReport(false);
+      if (format === "pdf") {
+        setIsGeneratingPdf(false);
+      } else {
+        setIsGeneratingExcel(false);
+      }
     }
   };
-  
+
   return (
-    <div className="bg-white shadow rounded-lg mb-6">
-      <Tabs defaultValue="student">
-        <div className="border-b border-gray-200">
-          <TabsList className="w-full bg-transparent">
-            <TabsTrigger value="student" className="w-1/2 py-4 px-1 data-[state=active]:border-b-2 data-[state=active]:border-purple-500 data-[state=active]:text-purple-600">
-              Student Progress Reports
-            </TabsTrigger>
-            <TabsTrigger value="plan" className="w-1/2 py-4 px-1 data-[state=active]:border-b-2 data-[state=active]:border-purple-500 data-[state=active]:text-purple-600">
-              Teaching Plan Reports
-            </TabsTrigger>
-          </TabsList>
-        </div>
-        
-        <div className="p-6">
-          <TabsContent value="student" className="mt-0">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Generate Student Progress Report</h3>
-            
-            <div className="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
-              <div className="sm:col-span-3">
-                <Label htmlFor="report-class">Class</Label>
-                <Select
-                  value={reportClass}
-                  onValueChange={setReportClass}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="All Classes" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Classes</SelectItem>
-                    <SelectItem value="Nursery">Nursery</SelectItem>
-                    <SelectItem value="LKG">LKG</SelectItem>
-                    <SelectItem value="UKG">UKG</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {isAdmin && (
-                <div className="sm:col-span-3">
-                  <Label htmlFor="report-teacher">Teacher</Label>
-                  <Select
-                    value={reportTeacher}
-                    onValueChange={setReportTeacher}
-                  >
-                    <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="All Teachers" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Teachers</SelectItem>
-                      {teachers?.map(teacher => (
-                        <SelectItem key={teacher.id} value={teacher.id.toString()}>
-                          {teacher.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              
-              <div className="sm:col-span-3">
-                <Label htmlFor="report-start-date">From Date</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full mt-1 justify-start text-left font-normal",
-                        !startDate && "text-muted-foreground"
+    <Tabs defaultValue="student-progress" onValueChange={setActiveTab} className="w-full">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-semibold">Report Generator</h2>
+        <TabsList>
+          <TabsTrigger value="student-progress">Student Progress</TabsTrigger>
+          <TabsTrigger value="teaching-plans">Teaching Plans</TabsTrigger>
+        </TabsList>
+      </div>
+
+      <TabsContent value="student-progress">
+        <Card>
+          <CardHeader>
+            <CardTitle>Generate Student Progress Report</CardTitle>
+            <CardDescription>
+              Create comprehensive reports of student progress across all development areas.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form {...studentReportForm}>
+              <form className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={studentReportForm.control}
+                    name="classType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Class</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select class" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="all">All Classes</SelectItem>
+                            <SelectItem value="nursery">Nursery</SelectItem>
+                            <SelectItem value="lkg">LKG</SelectItem>
+                            <SelectItem value="ukg">UKG</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {user?.role === "admin" && (
+                    <FormField
+                      control={studentReportForm.control}
+                      name="teacherId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Teacher</FormLabel>
+                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select teacher" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="all">All Teachers</SelectItem>
+                              {teachers.map((teacher) => (
+                                <SelectItem key={teacher.id} value={teacher.id.toString()}>
+                                  {teacher.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
                       )}
-                    >
-                      {startDate ? format(startDate, "PPP") : <span>Pick a date</span>}
-                      <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={startDate}
-                      onSelect={setStartDate}
-                      initialFocus
                     />
-                  </PopoverContent>
-                </Popover>
-              </div>
-              
-              <div className="sm:col-span-3">
-                <Label htmlFor="report-end-date">To Date</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full mt-1 justify-start text-left font-normal",
-                        !endDate && "text-muted-foreground"
+                  )}
+
+                  <FormField
+                    control={studentReportForm.control}
+                    name="startDate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>From Date</FormLabel>
+                        <FormControl>
+                          <Input type="date" {...field} />
+                        </FormControl>
+                        <FormDescription>
+                          Optional start date for progress entries
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={studentReportForm.control}
+                    name="endDate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>To Date</FormLabel>
+                        <FormControl>
+                          <Input type="date" {...field} />
+                        </FormControl>
+                        <FormDescription>
+                          Optional end date for progress entries
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="sm:col-span-2">
+                    <FormField
+                      control={studentReportForm.control}
+                      name="includePhotos"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-start space-x-3 space-y-0 py-2">
+                          <FormControl>
+                            <Checkbox
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                          <div className="space-y-1 leading-none">
+                            <FormLabel>Include student photos in report</FormLabel>
+                            <FormDescription>
+                              Photos will be included in the PDF report only
+                            </FormDescription>
+                          </div>
+                        </FormItem>
                       )}
-                    >
-                      {endDate ? format(endDate, "PPP") : <span>Pick a date</span>}
-                      <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={endDate}
-                      onSelect={setEndDate}
-                      disabled={(date) =>
-                        startDate ? date < startDate : false
-                      }
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-              
-              <div className="sm:col-span-6">
-                <div className="relative flex items-start">
-                  <div className="flex h-5 items-center">
-                    <Checkbox 
-                      id="include-photos" 
-                      checked={includePhotos}
-                      onCheckedChange={(checked) => setIncludePhotos(checked as boolean)}
                     />
                   </div>
-                  <div className="ml-3">
-                    <Label 
-                      htmlFor="include-photos" 
-                      className="font-medium text-gray-700"
-                    >
-                      Include student photos in report
-                    </Label>
-                    <p className="text-sm text-gray-500">Photos will be included in the PDF report only</p>
-                  </div>
                 </div>
-              </div>
-            </div>
-            
-            <div className="mt-6 flex items-center justify-between">
-              <span className="text-sm text-gray-500">Reports will include student details and progress history</span>
-              
-              <div className="flex space-x-3">
-                <Button
-                  variant="default"
-                  onClick={() => generateStudentReport('pdf')}
-                  disabled={isGenerating}
-                  className="bg-purple-600 hover:bg-purple-700"
-                >
-                  {isGenerating ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileText className="mr-2 h-4 w-4" />
-                  )}
-                  {isGenerating ? "Generating..." : "Download PDF"}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => generateStudentReport('excel')}
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileSpreadsheet className="mr-2 h-4 w-4" />
-                  )}
-                  {isGenerating ? "Generating..." : "Download Excel"}
-                </Button>
-              </div>
-            </div>
-          </TabsContent>
-          
-          <TabsContent value="plan" className="mt-0">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Generate Teaching Plan Report</h3>
-            
-            <div className="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
-              <div className="sm:col-span-2">
-                <Label htmlFor="plan-type-report">Plan Type</Label>
-                <Select
-                  value={planType}
-                  onValueChange={setPlanType}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="All Types" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Types</SelectItem>
-                    <SelectItem value="Annual">Annual</SelectItem>
-                    <SelectItem value="Monthly">Monthly</SelectItem>
-                    <SelectItem value="Weekly">Weekly</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div className="sm:col-span-2">
-                <Label htmlFor="plan-class-report">Class</Label>
-                <Select
-                  value={planClass}
-                  onValueChange={setPlanClass}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="All Classes" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Classes</SelectItem>
-                    <SelectItem value="Nursery">Nursery</SelectItem>
-                    <SelectItem value="LKG">LKG</SelectItem>
-                    <SelectItem value="UKG">UKG</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {isAdmin && (
-                <div className="sm:col-span-2">
-                  <Label htmlFor="plan-teacher-report">Teacher</Label>
-                  <Select
-                    value={planTeacher}
-                    onValueChange={setPlanTeacher}
+
+                <div className="flex justify-end space-x-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handleStudentReportSubmit(studentReportForm.getValues(), "excel")}
+                    disabled={isGeneratingExcel || isGeneratingPdf}
                   >
-                    <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="All Teachers" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Teachers</SelectItem>
-                      {teachers?.map(teacher => (
-                        <SelectItem key={teacher.id} value={teacher.id.toString()}>
-                          {teacher.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    {isGeneratingExcel ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <FileSpreadsheet className="mr-2 h-4 w-4" />
+                        Download Excel
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => handleStudentReportSubmit(studentReportForm.getValues(), "pdf")}
+                    disabled={isGeneratingExcel || isGeneratingPdf}
+                  >
+                    {isGeneratingPdf ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <File className="mr-2 h-4 w-4" />
+                        Download PDF
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </Form>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="teaching-plans">
+        <Card>
+          <CardHeader>
+            <CardTitle>Generate Teaching Plans Report</CardTitle>
+            <CardDescription>
+              Create reports of teaching plans including activities and learning goals.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form {...planReportForm}>
+              <form className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={planReportForm.control}
+                    name="type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Plan Type</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select plan type" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="all">All Types</SelectItem>
+                            <SelectItem value="weekly">Weekly</SelectItem>
+                            <SelectItem value="monthly">Monthly</SelectItem>
+                            <SelectItem value="annual">Annual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={planReportForm.control}
+                    name="classType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Class</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select class" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="all">All Classes</SelectItem>
+                            <SelectItem value="nursery">Nursery</SelectItem>
+                            <SelectItem value="lkg">LKG</SelectItem>
+                            <SelectItem value="ukg">UKG</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="flex justify-end space-x-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handlePlanReportSubmit(planReportForm.getValues(), "excel")}
+                    disabled={isGeneratingExcel || isGeneratingPdf}
+                  >
+                    {isGeneratingExcel ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <FileSpreadsheet className="mr-2 h-4 w-4" />
+                        Download Excel
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => handlePlanReportSubmit(planReportForm.getValues(), "pdf")}
+                    disabled={isGeneratingExcel || isGeneratingPdf}
+                  >
+                    {isGeneratingPdf ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <File className="mr-2 h-4 w-4" />
+                        Download PDF
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </Form>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      {/* Report Preview Section */}
+      <div className="mt-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Report Preview</CardTitle>
+            <CardDescription>
+              Sample layout of the generated report
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="border border-gray-200 rounded-lg p-4">
+              <div className="text-center mb-6">
+                <h1 className="text-2xl font-bold text-purple-800">Nepal Central High School</h1>
+                <h2 className="text-lg font-medium text-gray-700">
+                  {activeTab === "student-progress" ? "Student Progress Report" : "Teaching Plans Report"}
+                </h2>
+                <p className="text-sm text-gray-500">Narephat, Kathmandu</p>
+              </div>
+
+              {activeTab === "student-progress" ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Student Name
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Class
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Social Skills
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Pre-Literacy
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Pre-Numeracy
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      <tr>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          Sample Student
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          UKG
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          Excellent
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          Good
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          Excellent
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Plan Title
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Type
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Class
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Duration
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      <tr>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          Sample Plan Title
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          Weekly
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          LKG
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          Jan 1, 2023 - Jan 7, 2023
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               )}
-            </div>
-            
-            <div className="mt-6 flex items-center justify-between">
-              <span className="text-sm text-gray-500">Reports will include teaching plan details including activities and goals</span>
-              
-              <div className="flex space-x-3">
-                <Button
-                  variant="default"
-                  onClick={() => generatePlanReport('pdf')}
-                  disabled={isGeneratingPlanReport}
-                  className="bg-purple-600 hover:bg-purple-700"
-                >
-                  {isGeneratingPlanReport ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileText className="mr-2 h-4 w-4" />
-                  )}
-                  {isGeneratingPlanReport ? "Generating..." : "Download PDF"}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => generatePlanReport('excel')}
-                  disabled={isGeneratingPlanReport}
-                >
-                  {isGeneratingPlanReport ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileSpreadsheet className="mr-2 h-4 w-4" />
-                  )}
-                  {isGeneratingPlanReport ? "Generating..." : "Download Excel"}
-                </Button>
+
+              <div className="mt-6 text-sm text-gray-500 text-right">
+                <p>Generated on: {new Date().toLocaleDateString()}</p>
+                <p>Nepal Central High School Pre-Primary System</p>
               </div>
             </div>
-          </TabsContent>
-        </div>
-      </Tabs>
-    </div>
+          </CardContent>
+        </Card>
+      </div>
+    </Tabs>
   );
 }

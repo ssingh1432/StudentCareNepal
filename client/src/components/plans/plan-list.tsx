@@ -1,389 +1,351 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Edit, Trash, Plus, FileText, Calendar } from "lucide-react";
 import { TeachingPlan } from "@shared/schema";
-import { useAuth } from "@/hooks/use-auth";
-import { PlanForm } from "./plan-form";
-import { Badge } from "@/components/ui/badge";
+
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from "@/components/ui/select";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { 
-  Search, 
-  Book, 
-  Edit, 
-  Trash2, 
-  Eye, 
-  Calendar, 
-  BookOpen,
-  Plus
-} from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { PlanForm } from "@/components/plans/plan-form";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+import { Input } from "@/components/ui/input";
 
 export function PlanList() {
   const { toast } = useToast();
-  const { user } = useAuth();
-  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [addPlanOpen, setAddPlanOpen] = useState(false);
+  const [viewPlanData, setViewPlanData] = useState<TeachingPlan | null>(null);
+  const [editPlanData, setEditPlanData] = useState<TeachingPlan | null>(null);
+  const [deletePlanId, setDeletePlanId] = useState<number | null>(null);
+  const [planTypeFilter, setPlanTypeFilter] = useState<string>("all");
   const [classFilter, setClassFilter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState<string>("");
-  const [showAddPlanForm, setShowAddPlanForm] = useState(false);
-  const [editingPlan, setEditingPlan] = useState<(TeachingPlan & { id: number }) | null>(null);
-  const [viewingPlan, setViewingPlan] = useState<TeachingPlan | null>(null);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [planToDelete, setPlanToDelete] = useState<number | null>(null);
-  
-  // Fetch teaching plans
-  const { data: teachingPlans, isLoading } = useQuery<TeachingPlan[]>({
-    queryKey: [
-      '/api/teaching-plans',
-      typeFilter !== "all" ? typeFilter : undefined,
-      classFilter !== "all" ? classFilter : undefined,
-    ],
+
+  // Build query params
+  const queryParams = new URLSearchParams();
+  if (planTypeFilter !== "all") {
+    queryParams.append("type", planTypeFilter);
+  }
+  if (classFilter !== "all") {
+    queryParams.append("classType", classFilter);
+  }
+
+  const { data: plans = [], isLoading } = useQuery<TeachingPlan[]>({
+    queryKey: [`/api/teaching-plans?${queryParams.toString()}`],
   });
-  
-  // Delete plan mutation
-  const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/teaching-plans/${id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/teaching-plans'] });
+
+  // Filter by search term
+  const filteredPlans = plans.filter(plan => 
+    searchTerm === "" || 
+    plan.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    plan.description.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleDeletePlan = async () => {
+    if (!deletePlanId) return;
+
+    try {
+      await apiRequest("DELETE", `/api/teaching-plans/${deletePlanId}`);
+      
+      queryClient.invalidateQueries({ queryKey: ["/api/teaching-plans"] });
+      
       toast({
-        title: "Plan Deleted",
-        description: "The teaching plan has been removed successfully.",
+        title: "Teaching plan deleted",
+        description: "The teaching plan has been deleted successfully",
       });
-      setDeleteConfirmOpen(false);
-    },
-    onError: (error) => {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || "Failed to delete teaching plan",
         variant: "destructive",
       });
-    },
-  });
-  
-  // Filter plans
-  const filteredPlans = teachingPlans?.filter(plan => {
-    if (searchTerm && !plan.title.toLowerCase().includes(searchTerm.toLowerCase())) {
-      return false;
-    }
-    
-    return true;
-  });
-  
-  // Function to get badge variant based on plan type
-  const getTypeVariant = (type: string): "annual" | "monthly" | "weekly" => {
-    switch (type) {
-      case "Annual": return "annual";
-      case "Monthly": return "monthly";
-      case "Weekly": return "weekly";
-      default: return "weekly";
+    } finally {
+      setDeletePlanId(null);
     }
   };
-  
-  // Function to get badge variant based on class
-  const getClassVariant = (className: string): "nursery" | "lkg" | "ukg" => {
-    switch (className) {
-      case "Nursery": return "nursery";
-      case "LKG": return "lkg";
-      case "UKG": return "ukg";
-      default: return "nursery";
-    }
+
+  const formatPlanType = (type: string): string => {
+    return type.charAt(0).toUpperCase() + type.slice(1);
   };
-  
-  const handleEditPlan = (plan: TeachingPlan & { id: number }) => {
-    setEditingPlan(plan);
-  };
-  
-  const handleViewPlan = (plan: TeachingPlan) => {
-    setViewingPlan(plan);
-  };
-  
-  const handleDeletePlan = (id: number) => {
-    setPlanToDelete(id);
-    setDeleteConfirmOpen(true);
-  };
-  
-  const confirmDelete = () => {
-    if (planToDelete) {
-      deleteMutation.mutate(planToDelete);
-    }
-  };
-  
+
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Teaching Plans</h2>
-        <Button onClick={() => setShowAddPlanForm(true)}>
-          <BookOpen className="mr-2 h-4 w-4" />
-          Create Plan
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-semibold">Teaching Plans</h2>
+        <Button onClick={() => setAddPlanOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" /> Create Plan
         </Button>
       </div>
-      
-      {/* Filter controls */}
-      <div className="bg-white p-4 shadow rounded-lg mb-6">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div>
-            <label htmlFor="plan-type-filter" className="block text-sm font-medium text-gray-700 mb-1">Plan Type</label>
-            <Select 
-              value={typeFilter} 
-              onValueChange={setTypeFilter}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="All Types" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="Annual">Annual</SelectItem>
-                <SelectItem value="Monthly">Monthly</SelectItem>
-                <SelectItem value="Weekly">Weekly</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          <div>
-            <label htmlFor="plan-class-filter" className="block text-sm font-medium text-gray-700 mb-1">Class</label>
-            <Select 
-              value={classFilter} 
-              onValueChange={setClassFilter}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="All Classes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Classes</SelectItem>
-                <SelectItem value="Nursery">Nursery</SelectItem>
-                <SelectItem value="LKG">LKG</SelectItem>
-                <SelectItem value="UKG">UKG</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          <div>
-            <label htmlFor="plan-search" className="block text-sm font-medium text-gray-700 mb-1">Search</label>
-            <div className="relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
-              <Input 
-                id="plan-search"
-                placeholder="Search plans" 
-                className="pl-8"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
+
+      <div className="bg-white p-4 rounded-lg shadow">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Select value={planTypeFilter} onValueChange={setPlanTypeFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Plan Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="weekly">Weekly</SelectItem>
+              <SelectItem value="monthly">Monthly</SelectItem>
+              <SelectItem value="annual">Annual</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={classFilter} onValueChange={setClassFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Class" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Classes</SelectItem>
+              <SelectItem value="nursery">Nursery</SelectItem>
+              <SelectItem value="lkg">LKG</SelectItem>
+              <SelectItem value="ukg">UKG</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <div className="md:col-span-2 relative">
+            <Input
+              placeholder="Search plans..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pr-10"
+            />
+            <FileText className="absolute right-3 top-2.5 h-5 w-5 text-gray-400" />
           </div>
         </div>
       </div>
-      
-      {/* Teaching Plans Grid */}
-      {isLoading ? (
-        <div className="p-12 text-center">
-          <BookOpen className="mx-auto h-12 w-12 text-gray-400 animate-pulse" />
-          <p className="mt-4 text-gray-500">Loading teaching plans...</p>
-        </div>
-      ) : filteredPlans?.length === 0 ? (
-        <div className="p-12 text-center">
-          <BookOpen className="mx-auto h-12 w-12 text-gray-400" />
-          <p className="mt-4 text-gray-500">No teaching plans found matching the filters.</p>
-          <Button 
-            variant="outline" 
-            className="mt-4"
-            onClick={() => setShowAddPlanForm(true)}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Create Your First Plan
-          </Button>
+
+      {filteredPlans.length === 0 ? (
+        <div className="text-center p-8 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+          <FileText className="mx-auto h-12 w-12 text-gray-400" />
+          <h3 className="mt-2 text-sm font-medium text-gray-900">No teaching plans found</h3>
+          <p className="mt-1 text-sm text-gray-500">
+            Get started by creating a new teaching plan.
+          </p>
+          <div className="mt-6">
+            <Button onClick={() => setAddPlanOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Create Plan
+            </Button>
+          </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredPlans?.map(plan => (
-            <Card key={plan.id} className="overflow-hidden">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between mb-2">
-                  <Badge variant={getTypeVariant(plan.type)}>
-                    {plan.type}
-                  </Badge>
-                  <Badge variant={getClassVariant(plan.class)}>
-                    {plan.class}
-                  </Badge>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredPlans.map((plan) => (
+            <Card key={plan.id} className="overflow-hidden flex flex-col">
+              <CardContent className="p-0">
+                <div className="flex justify-between items-center p-4 border-b border-gray-200 bg-purple-50">
+                  <div>
+                    <div className="flex items-center space-x-2 mb-1">
+                      <Badge variant={plan.type as any}>
+                        {formatPlanType(plan.type)}
+                      </Badge>
+                      <Badge variant={plan.classType as any}>
+                        {plan.classType.toUpperCase()}
+                      </Badge>
+                    </div>
+                    <h3 className="text-lg font-medium text-gray-900 truncate max-w-xs">
+                      {plan.title}
+                    </h3>
+                  </div>
+                  <div className="flex">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditPlanData(plan)}
+                      title="Edit Plan"
+                    >
+                      <Edit className="h-4 w-4 text-gray-500" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setDeletePlanId(plan.id)}
+                      title="Delete Plan"
+                    >
+                      <Trash className="h-4 w-4 text-gray-500" />
+                    </Button>
+                  </div>
                 </div>
-                <CardTitle className="text-lg">{plan.title}</CardTitle>
-                <CardDescription>
-                  <div className="flex items-center text-sm mt-1">
-                    <Calendar className="h-3.5 w-3.5 text-gray-400 mr-1" />
-                    {format(new Date(plan.startDate), "MMM d, yyyy")} to {format(new Date(plan.endDate), "MMM d, yyyy")}
+                
+                <div className="p-4">
+                  <div className="flex items-center text-sm text-gray-500 mb-2">
+                    <Calendar className="h-4 w-4 mr-2 text-gray-400" />
+                    <span>
+                      {format(new Date(plan.startDate), "MMM d, yyyy")} - {format(new Date(plan.endDate), "MMM d, yyyy")}
+                    </span>
                   </div>
-                  <div className="flex items-center text-sm mt-1">
-                    <Book className="h-3.5 w-3.5 text-gray-400 mr-1" />
-                    Created by: {plan.teacherId === user?.id ? "You" : "Teacher"}
-                  </div>
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-gray-500 line-clamp-3">{plan.description}</p>
+                  
+                  <p className="text-sm text-gray-600 line-clamp-3">
+                    {plan.description}
+                  </p>
+                </div>
               </CardContent>
-              <CardFooter className="flex justify-between">
-                <div className="flex space-x-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => handleViewPlan(plan)}
-                  >
-                    <Eye className="h-4 w-4 mr-1" />
-                    View
-                  </Button>
-                  <Button 
-                    size="sm"
-                    onClick={() => handleEditPlan(plan as TeachingPlan & { id: number })}
-                  >
-                    <Edit className="h-4 w-4 mr-1" />
-                    Edit
-                  </Button>
-                </div>
+              
+              <CardFooter className="p-4 mt-auto border-t border-gray-200 bg-gray-50">
                 <Button 
-                  variant="outline" 
+                  variant="link" 
                   size="sm"
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                  onClick={() => handleDeletePlan(plan.id)}
+                  className="p-0 h-auto text-purple-600"
+                  onClick={() => setViewPlanData(plan)}
                 >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Delete
+                  View Details
                 </Button>
               </CardFooter>
             </Card>
           ))}
         </div>
       )}
-      
-      {/* Add plan form */}
-      {showAddPlanForm && (
-        <PlanForm 
-          open={showAddPlanForm} 
-          onClose={() => setShowAddPlanForm(false)} 
-        />
-      )}
-      
-      {/* Edit plan form */}
-      {editingPlan && (
-        <PlanForm 
-          open={!!editingPlan} 
-          onClose={() => setEditingPlan(null)} 
-          editingPlan={editingPlan}
-        />
-      )}
-      
-      {/* View plan dialog */}
-      {viewingPlan && (
-        <Dialog open={!!viewingPlan} onOpenChange={() => setViewingPlan(null)}>
-          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-            <DialogHeader>
-              <div className="flex items-center space-x-2">
-                <Badge variant={getTypeVariant(viewingPlan.type)}>
-                  {viewingPlan.type}
-                </Badge>
-                <Badge variant={getClassVariant(viewingPlan.class)}>
-                  {viewingPlan.class}
-                </Badge>
-              </div>
-              <DialogTitle className="mt-2 text-xl">{viewingPlan.title}</DialogTitle>
-              <DialogDescription>
-                <div className="flex items-center mt-1">
-                  <Calendar className="h-4 w-4 text-gray-400 mr-1" />
-                  {format(new Date(viewingPlan.startDate), "MMMM d, yyyy")} to {format(new Date(viewingPlan.endDate), "MMMM d, yyyy")}
-                </div>
-              </DialogDescription>
-            </DialogHeader>
-            
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-1">Description</h3>
-                <p className="text-sm text-gray-600 whitespace-pre-line">{viewingPlan.description}</p>
-              </div>
-              
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-1">Activities</h3>
-                <p className="text-sm text-gray-600 whitespace-pre-line">{viewingPlan.activities}</p>
-              </div>
-              
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-1">Learning Goals</h3>
-                <p className="text-sm text-gray-600 whitespace-pre-line">{viewingPlan.goals}</p>
-              </div>
-            </div>
-            
-            <DialogFooter>
-              <Button 
-                variant="outline" 
-                onClick={() => setViewingPlan(null)}
-              >
-                Close
-              </Button>
-              <Button 
-                onClick={() => {
-                  setEditingPlan(viewingPlan as TeachingPlan & { id: number });
-                  setViewingPlan(null);
-                }}
-              >
-                <Edit className="h-4 w-4 mr-1" />
-                Edit Plan
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-      
-      {/* Delete confirmation dialog */}
-      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <DialogContent>
+
+      {/* Create Plan Dialog */}
+      <Dialog open={addPlanOpen} onOpenChange={setAddPlanOpen}>
+        <DialogContent className="sm:max-w-[800px]">
           <DialogHeader>
-            <DialogTitle>Delete Teaching Plan</DialogTitle>
+            <DialogTitle>Create Teaching Plan</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this teaching plan? This action cannot be undone.
+              Create a new teaching plan with activities and learning goals.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirmOpen(false)}
-              disabled={deleteMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button 
-              variant="destructive" 
-              onClick={confirmDelete}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
+          <PlanForm
+            onSuccess={() => setAddPlanOpen(false)}
+            onCancel={() => setAddPlanOpen(false)}
+          />
         </DialogContent>
       </Dialog>
+
+      {/* Edit Plan Dialog */}
+      <Dialog
+        open={!!editPlanData}
+        onOpenChange={(open) => !open && setEditPlanData(null)}
+      >
+        <DialogContent className="sm:max-w-[800px]">
+          <DialogHeader>
+            <DialogTitle>Edit Teaching Plan</DialogTitle>
+            <DialogDescription>
+              Update the teaching plan details, activities, and goals.
+            </DialogDescription>
+          </DialogHeader>
+          {editPlanData && (
+            <PlanForm
+              initialData={editPlanData}
+              isEditMode={true}
+              onSuccess={() => setEditPlanData(null)}
+              onCancel={() => setEditPlanData(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* View Plan Dialog */}
+      <Dialog
+        open={!!viewPlanData}
+        onOpenChange={(open) => !open && setViewPlanData(null)}
+      >
+        <DialogContent className="sm:max-w-[800px]">
+          <DialogHeader>
+            <DialogTitle>
+              <div className="flex items-center space-x-2">
+                <span>{viewPlanData?.title}</span>
+                <Badge variant={viewPlanData?.type as any}>
+                  {viewPlanData?.type && formatPlanType(viewPlanData.type)}
+                </Badge>
+                <Badge variant={viewPlanData?.classType as any}>
+                  {viewPlanData?.classType && viewPlanData.classType.toUpperCase()}
+                </Badge>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+          {viewPlanData && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-sm font-medium text-gray-500 mb-1">Duration</h3>
+                <p className="text-sm">
+                  {format(new Date(viewPlanData.startDate), "MMMM d, yyyy")} - {format(new Date(viewPlanData.endDate), "MMMM d, yyyy")}
+                </p>
+              </div>
+              
+              <div>
+                <h3 className="text-sm font-medium text-gray-500 mb-1">Description</h3>
+                <p className="text-sm whitespace-pre-line">{viewPlanData.description}</p>
+              </div>
+              
+              <div>
+                <h3 className="text-sm font-medium text-gray-500 mb-1">Activities</h3>
+                <p className="text-sm whitespace-pre-line">{viewPlanData.activities}</p>
+              </div>
+              
+              <div>
+                <h3 className="text-sm font-medium text-gray-500 mb-1">Learning Goals</h3>
+                <p className="text-sm whitespace-pre-line">{viewPlanData.goals}</p>
+              </div>
+              
+              <div className="flex justify-end space-x-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setViewPlanData(null);
+                    setEditPlanData(viewPlanData);
+                  }}
+                >
+                  <Edit className="mr-2 h-4 w-4" /> Edit
+                </Button>
+                <Button
+                  variant="default"
+                  onClick={() => setViewPlanData(null)}
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog
+        open={!!deletePlanId}
+        onOpenChange={(open) => !open && setDeletePlanId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this teaching plan.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeletePlan}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

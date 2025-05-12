@@ -1,6 +1,5 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
-
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
@@ -15,23 +14,21 @@ const badgeVariants = cva(
         destructive:
           "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
         outline: "text-foreground",
-        purple: "border-transparent bg-purple-100 text-purple-800 hover:bg-purple-200",
-        yellow: "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200",
-        green: "border-transparent bg-green-100 text-green-800 hover:bg-green-200",
-        blue: "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200",
-        red: "border-transparent bg-red-100 text-red-800 hover:bg-red-200",
-        nursery: "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200",
-        lkg: "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200",
-        ukg: "border-transparent bg-green-100 text-green-800 hover:bg-green-200",
-        annual: "border-transparent bg-green-100 text-green-800 hover:bg-green-200",
-        monthly: "border-transparent bg-indigo-100 text-indigo-800 hover:bg-indigo-200",
-        weekly: "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200",
-        talented: "border-transparent bg-green-100 text-green-800 hover:bg-green-200",
-        average: "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200",
-        "slow-learner": "border-transparent bg-red-100 text-red-800 hover:bg-red-200",
-        excellent: "border-transparent bg-green-100 text-green-800 hover:bg-green-200",
-        good: "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200",
-        "needs-improvement": "border-transparent bg-red-100 text-red-800 hover:bg-red-200",
+        success: "border-transparent bg-green-100 text-green-800 hover:bg-green-200/80",
+        warning: "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200/80",
+        info: "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200/80",
+        nursery: "border-transparent bg-green-100 text-green-800 hover:bg-green-200/80",
+        lkg: "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200/80",
+        ukg: "border-transparent bg-purple-100 text-purple-800 hover:bg-purple-200/80",
+        talented: "border-transparent bg-green-100 text-green-800 hover:bg-green-200/80",
+        average: "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200/80",
+        slow_learner: "border-transparent bg-red-100 text-red-800 hover:bg-red-200/80",
+        excellent: "border-transparent bg-green-100 text-green-800 hover:bg-green-200/80",
+        good: "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200/80", 
+        needs_improvement: "border-transparent bg-red-100 text-red-800 hover:bg-red-200/80",
+        annual: "border-transparent bg-purple-100 text-purple-800 hover:bg-purple-200/80",
+        monthly: "border-transparent bg-green-100 text-green-800 hover:bg-green-200/80",
+        weekly: "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200/80"
       },
     },
     defaultVariants: {

@@ -1,319 +1,353 @@
-import PDFDocument from 'pdfkit';
-import { Student, Progress, TeachingPlan } from '@shared/schema';
+import { jsPDF } from 'jspdf';
+import { Student, ProgressEntry, TeachingPlan } from '@shared/schema';
+import { IStorage } from './storage';
 import axios from 'axios';
-import { createWriteStream } from 'fs';
 
-// Function to generate a student progress report PDF
-export async function generateStudentProgressPDF(
-  students: Student[],
-  progressRecords: Map<number, Progress[]>,
-  includePhotos: boolean = false,
-  className?: string
-): Promise<PDFDocument> {
-  // Create a new PDF document
-  const doc = new PDFDocument({ margin: 50 });
+// Add Nepali font support
+// This is a simplified implementation
+// In a production environment, we would properly add font support
 
-  // Add header
-  doc.fontSize(18).font('Helvetica-Bold').text('Nepal Central High School', { align: 'center' });
-  doc.fontSize(14).font('Helvetica').text('Student Progress Report', { align: 'center' });
-  doc.fontSize(10).text('Narephat, Kathmandu', { align: 'center' });
-  doc.moveDown(1);
-
-  // Add report date
-  const reportDate = new Date().toLocaleDateString();
-  doc.fontSize(10).text(`Report Generated: ${reportDate}`, { align: 'right' });
-  doc.moveDown(1);
-
-  // Add filters if any
-  if (className) {
-    doc.fontSize(12).font('Helvetica-Bold').text(`Class: ${className}`);
-    doc.moveDown(0.5);
-  }
-
-  // Loop through each student
-  for (const student of students) {
-    const studentProgress = progressRecords.get(student.id) || [];
-    
-    doc.moveDown(1);
-    
-    // Start student section with a line separator
-    doc.moveTo(50, doc.y)
-       .lineTo(550, doc.y)
-       .stroke();
-    
-    doc.moveDown(0.5);
-
-    // Create a row for student info with photo if requested
-    if (includePhotos && student.photoUrl) {
-      try {
-        // Add student information in a table-like format
-        doc.fontSize(14).font('Helvetica-Bold').text(student.name, { continued: true });
-        
-        // Leave space for image
-        const initialY = doc.y;
-        doc.moveDown(0.5);
-        
-        // Add student details
-        doc.fontSize(10).font('Helvetica')
-           .text(`Class: ${student.class}`, { continued: false });
-        doc.text(`Age: ${student.age} years`, { continued: false });
-        doc.text(`Learning Ability: ${student.learningAbility}`, { continued: false });
-        
-        if (student.writingSpeed && student.class !== 'Nursery') {
-          doc.text(`Writing Speed: ${student.writingSpeed}`, { continued: false });
-        }
-        
-        // Try to download and embed the student photo
-        try {
-          const response = await axios.get(student.photoUrl, { responseType: 'arraybuffer' });
-          
-          // Calculate position for image (to the right of the text)
-          const imageX = 450;
-          
-          // Add the image to the PDF
-          doc.image(response.data, imageX, initialY, { 
-            fit: [80, 80],
-            align: 'right',
-            valign: 'top'
-          });
-        } catch (error) {
-          console.error(`Failed to load photo for student ${student.id}:`, error);
-        }
-      } catch (error) {
-        console.error('Error adding student photo:', error);
-        
-        // Fallback to text-only if photo fails
-        doc.fontSize(14).font('Helvetica-Bold').text(student.name);
-        doc.fontSize(10).font('Helvetica')
-           .text(`Class: ${student.class}`)
-           .text(`Age: ${student.age} years`)
-           .text(`Learning Ability: ${student.learningAbility}`);
-        
-        if (student.writingSpeed && student.class !== 'Nursery') {
-          doc.text(`Writing Speed: ${student.writingSpeed}`);
-        }
-      }
-    } else {
-      // Text-only student information
-      doc.fontSize(14).font('Helvetica-Bold').text(student.name);
-      doc.fontSize(10).font('Helvetica')
-         .text(`Class: ${student.class}`)
-         .text(`Age: ${student.age} years`)
-         .text(`Learning Ability: ${student.learningAbility}`);
-      
-      if (student.writingSpeed && student.class !== 'Nursery') {
-        doc.text(`Writing Speed: ${student.writingSpeed}`);
-      }
-    }
-    
-    doc.moveDown(1);
-    
-    // Progress history
-    if (studentProgress.length > 0) {
-      doc.fontSize(12).font('Helvetica-Bold').text('Progress History:');
-      doc.moveDown(0.5);
-      
-      // Create headers for the table
-      doc.fontSize(9).font('Helvetica-Bold');
-      
-      const columns = {
-        date: { x: 50, width: 80 },
-        social: { x: 130, width: 70 },
-        literacy: { x: 200, width: 70 },
-        numeracy: { x: 270, width: 70 },
-        motor: { x: 340, width: 70 },
-        emotional: { x: 410, width: 90 }
-      };
-      
-      // Draw headers
-      doc.text('Date', columns.date.x, doc.y);
-      doc.text('Social Skills', columns.social.x, doc.y);
-      doc.text('Pre-Literacy', columns.literacy.x, doc.y);
-      doc.text('Pre-Numeracy', columns.numeracy.x, doc.y);
-      doc.text('Motor Skills', columns.motor.x, doc.y);
-      doc.text('Emotional Dev.', columns.emotional.x, doc.y);
-      
-      doc.moveDown(0.5);
-      
-      // Draw a line under the headers
-      doc.moveTo(50, doc.y)
-         .lineTo(550, doc.y)
-         .stroke();
-      
-      doc.moveDown(0.5);
-      
-      // List progress entries
-      studentProgress
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .forEach(entry => {
-          // Format date
-          const entryDate = new Date(entry.date).toLocaleDateString();
-          
-          // Regular font for data rows
-          doc.fontSize(9).font('Helvetica');
-          
-          // Draw each cell
-          doc.text(entryDate, columns.date.x, doc.y);
-          doc.text(entry.socialSkills, columns.social.x, doc.y);
-          doc.text(entry.preLiteracy, columns.literacy.x, doc.y);
-          doc.text(entry.preNumeracy, columns.numeracy.x, doc.y);
-          doc.text(entry.motorSkills, columns.motor.x, doc.y);
-          doc.text(entry.emotionalDevelopment, columns.emotional.x, doc.y);
-          
-          doc.moveDown(0.5);
-          
-          // Add comments if present
-          if (entry.comments) {
-            doc.fontSize(9).font('Helvetica-Oblique')
-               .text(`Comments: ${entry.comments}`, { indent: 10 });
-            doc.moveDown(0.5);
-          }
-        });
-    } else {
-      doc.fontSize(10).font('Helvetica-Italic').text('No progress records available.');
-    }
-    
-    // Add a page break after each student except the last one
-    if (student !== students[students.length - 1]) {
-      doc.addPage();
-    }
-  }
-  
-  // Add footer with page numbers
-  const totalPages = doc.bufferedPageRange().count;
-  for (let i = 0; i < totalPages; i++) {
-    doc.switchToPage(i);
-    
-    // Footer line
-    doc.moveTo(50, doc.page.height - 50)
-       .lineTo(550, doc.page.height - 50)
-       .stroke();
-       
-    // Page number and system info
-    doc.fontSize(8).font('Helvetica')
-       .text(
-         `Page ${i + 1} of ${totalPages} | Nepal Central High School Pre-Primary System`,
-         50,
-         doc.page.height - 40,
-         { align: 'center' }
-       );
-  }
-  
-  // Finalize PDF
-  doc.end();
-  
-  return doc;
+interface ReportOptions {
+  startDate?: string;
+  endDate?: string;
+  includePhotos?: boolean;
+  templateType?: 'studentProgress' | 'teachingPlans';
+  storage: IStorage;
 }
 
-// Function to generate a teaching plan report PDF
-export async function generateTeachingPlanPDF(
-  plans: TeachingPlan[],
-  teacherNames: Map<number, string>,
-  type?: string,
-  className?: string
-): Promise<PDFDocument> {
-  // Create a new PDF document
-  const doc = new PDFDocument({ margin: 50 });
-
+/**
+ * Generate a PDF report for students or teaching plans
+ */
+export async function generatePdfReport(
+  data: Student[] | TeachingPlan[],
+  options: ReportOptions
+): Promise<Buffer> {
+  const doc = new jsPDF();
+  const templateType = options.templateType || 'studentProgress';
+  
   // Add header
-  doc.fontSize(18).font('Helvetica-Bold').text('Nepal Central High School', { align: 'center' });
-  doc.fontSize(14).font('Helvetica').text('Teaching Plans Report', { align: 'center' });
-  doc.fontSize(10).text('Narephat, Kathmandu', { align: 'center' });
-  doc.moveDown(1);
+  addHeader(doc);
+  
+  if (templateType === 'studentProgress') {
+    await generateStudentProgressReport(doc, data as Student[], options);
+  } else {
+    generateTeachingPlansReport(doc, data as TeachingPlan[]);
+  }
+  
+  // Add footer
+  addFooter(doc);
+  
+  // Return the PDF as a buffer
+  return Buffer.from(doc.output('arraybuffer'));
+}
 
-  // Add report date
-  const reportDate = new Date().toLocaleDateString();
-  doc.fontSize(10).text(`Report Generated: ${reportDate}`, { align: 'right' });
-  doc.moveDown(1);
+/**
+ * Add the school header to the PDF
+ */
+function addHeader(doc: jsPDF): void {
+  doc.setFontSize(18);
+  doc.setTextColor(124, 58, 237); // Purple color
+  doc.text('Nepal Central High School', 105, 20, { align: 'center' });
+  
+  doc.setFontSize(14);
+  doc.setTextColor(0, 0, 0);
+  doc.text('Pre-Primary Student Record System', 105, 30, { align: 'center' });
+  
+  doc.setFontSize(10);
+  doc.setTextColor(100, 100, 100);
+  doc.text('Narephat, Kathmandu', 105, 40, { align: 'center' });
+  
+  // Add horizontal line
+  doc.setDrawColor(124, 58, 237);
+  doc.setLineWidth(0.5);
+  doc.line(20, 45, 190, 45);
+  
+  doc.setFontSize(12);
+  doc.setTextColor(0, 0, 0);
+}
 
-  // Add filters if any
-  if (type || className) {
-    doc.fontSize(12).font('Helvetica-Bold');
+/**
+ * Add the footer to the PDF
+ */
+function addFooter(doc: jsPDF): void {
+  const pageCount = doc.getNumberOfPages();
+  
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 100);
     
-    if (type) {
-      doc.text(`Plan Type: ${type}`);
+    const now = new Date();
+    const dateStr = now.toLocaleDateString();
+    
+    doc.text(`Generated on: ${dateStr}`, 20, 285);
+    doc.text(`Page ${i} of ${pageCount}`, 180, 285);
+    
+    // Add horizontal line
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.2);
+    doc.line(20, 280, 190, 280);
+  }
+}
+
+/**
+ * Generate student progress report
+ */
+async function generateStudentProgressReport(
+  doc: jsPDF,
+  students: Student[],
+  options: ReportOptions
+): Promise<void> {
+  // Add report title
+  doc.setFontSize(14);
+  doc.setTextColor(0, 0, 0);
+  doc.text('Student Progress Report', 105, 60, { align: 'center' });
+  
+  // Add date range if specified
+  if (options.startDate && options.endDate) {
+    doc.setFontSize(10);
+    doc.text(`Period: ${options.startDate} to ${options.endDate}`, 105, 70, { align: 'center' });
+  }
+  
+  let yPos = 80;
+  
+  // Process each student
+  for (let i = 0; i < students.length; i++) {
+    const student = students[i];
+    
+    // Check if we need to add a new page
+    if (yPos > 250) {
+      doc.addPage();
+      yPos = 20;
     }
     
-    if (className) {
-      doc.text(`Class: ${className}`);
+    // Add student information
+    doc.setFontSize(12);
+    doc.setTextColor(124, 58, 237);
+    doc.text(`${student.name}`, 20, yPos);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(0, 0, 0);
+    
+    yPos += 10;
+    doc.text(`Class: ${student.classType.toUpperCase()}`, 20, yPos);
+    
+    yPos += 6;
+    doc.text(`Age: ${student.age} years`, 20, yPos);
+    
+    yPos += 6;
+    doc.text(`Learning Ability: ${formatEnumValue(student.learningAbility)}`, 20, yPos);
+    
+    yPos += 6;
+    doc.text(`Writing Speed: ${formatEnumValue(student.writingSpeed)}`, 20, yPos);
+    
+    // Add student photo if required and available
+    if (options.includePhotos && student.photoUrl) {
+      try {
+        const photoX = 150;
+        const photoY = yPos - 28;
+        const photoWidth = 40;
+        const photoHeight = 40;
+        
+        // Try to load the image from URL
+        if (student.photoUrl.startsWith('http')) {
+          const response = await axios.get(student.photoUrl, { responseType: 'arraybuffer' });
+          const buffer = Buffer.from(response.data, 'binary');
+          const base64Image = buffer.toString('base64');
+          
+          const imageType = student.photoUrl.endsWith('.png') ? 'PNG' : 'JPEG';
+          doc.addImage(base64Image, imageType, photoX, photoY, photoWidth, photoHeight);
+        }
+      } catch (error) {
+        console.error(`Failed to add image for student ${student.id}:`, error);
+      }
     }
     
-    doc.moveDown(0.5);
+    // Get progress entries for this student
+    const progressEntries = await options.storage.getProgressEntriesByStudentId(student.id);
+    
+    if (progressEntries.length > 0) {
+      yPos += 10;
+      doc.setFontSize(11);
+      doc.setTextColor(124, 58, 237);
+      doc.text('Progress History:', 20, yPos);
+      
+      yPos += 8;
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+      
+      // Add table header
+      const headers = ['Date', 'Social Skills', 'Pre-Literacy', 'Pre-Numeracy', 'Motor Skills', 'Emotional Dev.'];
+      const colWidths = [30, 30, 30, 30, 30, 30];
+      let xPos = 20;
+      
+      for (let j = 0; j < headers.length; j++) {
+        doc.setFontSize(8);
+        doc.setFont(undefined, 'bold');
+        doc.text(headers[j], xPos, yPos);
+        xPos += colWidths[j];
+      }
+      
+      // Add progress entries
+      for (let j = 0; j < Math.min(progressEntries.length, 5); j++) {
+        const entry = progressEntries[j];
+        xPos = 20;
+        yPos += 8;
+        
+        // Check if we need to add a new page
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+          
+          // Re-add headers on new page
+          xPos = 20;
+          for (let k = 0; k < headers.length; k++) {
+            doc.setFontSize(8);
+            doc.setFont(undefined, 'bold');
+            doc.text(headers[k], xPos, yPos);
+            xPos += colWidths[k];
+          }
+          
+          yPos += 8;
+          xPos = 20;
+        }
+        
+        doc.setFont(undefined, 'normal');
+        const date = new Date(entry.date).toLocaleDateString();
+        doc.text(date, xPos, yPos);
+        xPos += colWidths[0];
+        
+        doc.text(formatEnumValue(entry.socialSkills), xPos, yPos);
+        xPos += colWidths[1];
+        
+        doc.text(formatEnumValue(entry.preLiteracy), xPos, yPos);
+        xPos += colWidths[2];
+        
+        doc.text(formatEnumValue(entry.preNumeracy), xPos, yPos);
+        xPos += colWidths[3];
+        
+        doc.text(formatEnumValue(entry.motorSkills), xPos, yPos);
+        xPos += colWidths[4];
+        
+        doc.text(formatEnumValue(entry.emotionalDevelopment), xPos, yPos);
+      }
+    } else {
+      yPos += 10;
+      doc.setFontSize(10);
+      doc.setTextColor(100, 100, 100);
+      doc.text('No progress entries found for this student.', 20, yPos);
+    }
+    
+    // Add separator
+    yPos += 15;
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.2);
+    doc.line(20, yPos, 190, yPos);
+    yPos += 10;
   }
+}
 
-  // If no plans found
-  if (plans.length === 0) {
-    doc.fontSize(12).font('Helvetica-Italic').text('No teaching plans found matching the criteria.', { align: 'center' });
-  }
-
-  // Loop through each plan
-  for (const plan of plans) {
-    doc.moveDown(1);
+/**
+ * Generate teaching plans report
+ */
+function generateTeachingPlansReport(doc: jsPDF, plans: TeachingPlan[]): void {
+  // Add report title
+  doc.setFontSize(14);
+  doc.setTextColor(0, 0, 0);
+  doc.text('Teaching Plans Report', 105, 60, { align: 'center' });
+  
+  let yPos = 80;
+  
+  // Process each teaching plan
+  for (let i = 0; i < plans.length; i++) {
+    const plan = plans[i];
     
-    // Start plan section with a line separator
-    doc.moveTo(50, doc.y)
-       .lineTo(550, doc.y)
-       .stroke();
+    // Check if we need to add a new page
+    if (yPos > 250) {
+      doc.addPage();
+      yPos = 20;
+    }
     
-    doc.moveDown(0.5);
-
-    // Plan title and metadata
-    doc.fontSize(14).font('Helvetica-Bold').text(plan.title);
+    // Add plan information
+    doc.setFontSize(12);
+    doc.setTextColor(124, 58, 237);
+    doc.text(`${plan.title}`, 20, yPos);
     
-    // Plan details
-    doc.fontSize(10).font('Helvetica')
-       .text(`Type: ${plan.type} | Class: ${plan.class}`, { continued: true })
-       .text(` | Teacher: ${teacherNames.get(plan.teacherId) || 'Unknown'}`, { align: 'right' });
+    doc.setFontSize(10);
+    doc.setTextColor(0, 0, 0);
     
-    // Date range
+    yPos += 8;
+    doc.text(`Type: ${formatEnumValue(plan.type)}`, 20, yPos);
+    
+    yPos += 6;
+    doc.text(`Class: ${plan.classType.toUpperCase()}`, 20, yPos);
+    
+    yPos += 6;
     const startDate = new Date(plan.startDate).toLocaleDateString();
     const endDate = new Date(plan.endDate).toLocaleDateString();
-    doc.text(`Duration: ${startDate} to ${endDate}`);
+    doc.text(`Period: ${startDate} to ${endDate}`, 20, yPos);
     
-    doc.moveDown(0.5);
+    yPos += 10;
+    doc.setFontSize(11);
+    doc.setTextColor(124, 58, 237);
+    doc.text('Description:', 20, yPos);
     
-    // Description
-    doc.fontSize(12).font('Helvetica-Bold').text('Description:');
-    doc.fontSize(10).font('Helvetica').text(plan.description);
-    doc.moveDown(0.5);
+    yPos += 6;
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
     
-    // Activities
-    doc.fontSize(12).font('Helvetica-Bold').text('Activities:');
-    doc.fontSize(10).font('Helvetica').text(plan.activities);
-    doc.moveDown(0.5);
+    // Handle long description with word wrapping
+    const descriptionLines = doc.splitTextToSize(plan.description, 170);
+    doc.text(descriptionLines, 20, yPos);
+    yPos += descriptionLines.length * 5;
     
-    // Goals
-    doc.fontSize(12).font('Helvetica-Bold').text('Learning Goals:');
-    doc.fontSize(10).font('Helvetica').text(plan.goals);
+    // Add activities
+    yPos += 6;
+    doc.setFontSize(11);
+    doc.setTextColor(124, 58, 237);
+    doc.text('Activities:', 20, yPos);
     
-    // Add a page break after each plan except the last one
-    if (plan !== plans[plans.length - 1]) {
-      doc.addPage();
-    }
+    yPos += 6;
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    
+    // Handle long activities text with word wrapping
+    const activitiesLines = doc.splitTextToSize(plan.activities, 170);
+    doc.text(activitiesLines, 20, yPos);
+    yPos += activitiesLines.length * 5;
+    
+    // Add goals
+    yPos += 6;
+    doc.setFontSize(11);
+    doc.setTextColor(124, 58, 237);
+    doc.text('Goals:', 20, yPos);
+    
+    yPos += 6;
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    
+    // Handle long goals text with word wrapping
+    const goalsLines = doc.splitTextToSize(plan.goals, 170);
+    doc.text(goalsLines, 20, yPos);
+    yPos += goalsLines.length * 5;
+    
+    // Add separator
+    yPos += 10;
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.2);
+    doc.line(20, yPos, 190, yPos);
+    yPos += 10;
   }
+}
+
+/**
+ * Format enum values for display
+ */
+function formatEnumValue(value: string): string {
+  if (!value) return 'N/A';
   
-  // Add footer with page numbers
-  const totalPages = doc.bufferedPageRange().count;
-  for (let i = 0; i < totalPages; i++) {
-    doc.switchToPage(i);
-    
-    // Footer line
-    doc.moveTo(50, doc.page.height - 50)
-       .lineTo(550, doc.page.height - 50)
-       .stroke();
-       
-    // Page number and system info
-    doc.fontSize(8).font('Helvetica')
-       .text(
-         `Page ${i + 1} of ${totalPages} | Nepal Central High School Pre-Primary System`,
-         50,
-         doc.page.height - 40,
-         { align: 'center' }
-       );
-  }
-  
-  // Finalize PDF
-  doc.end();
-  
-  return doc;
+  return value
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }

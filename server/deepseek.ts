@@ -1,118 +1,118 @@
 import axios from 'axios';
 
-interface DeepSeekResponse {
-  id: string;
-  choices: {
-    index: number;
-    message: {
-      role: string;
-      content: string;
-    };
-  }[];
-}
+// Use OpenAI compatible SDK for DeepSeek
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com/v1/chat/completions';
 
-// Base model for DeepSeek V3
-const MODEL = 'deepseek-ai/deepseek-v3-chat';
+/**
+ * Gets teaching activity suggestions from DeepSeek AI
+ * @param prompt - The prompt for DeepSeek
+ * @returns The suggestions text
+ */
+export async function getAiSuggestions(prompt: string): Promise<string> {
+  // Check if DeepSeek API key is configured
+  if (!DEEPSEEK_API_KEY) {
+    console.warn('DeepSeek API key not configured, returning sample suggestions');
+    return generateSampleSuggestions(prompt);
+  }
 
-// Get DeepSeek API key from environment variables
-const getApiKey = (): string => {
-  return process.env.DEEPSEEK_API_KEY || '';
-};
-
-// Function to generate AI suggestions for teaching plans
-export async function generateSuggestions(
-  prompt: string,
-  className: string,
-  activityType: string
-): Promise<string | null> {
   try {
-    const apiKey = getApiKey();
-    
-    if (!apiKey) {
-      console.error('DeepSeek API key not found');
-      return null;
-    }
-
-    // Construct a detailed prompt based on the user's request and class type
-    const systemPrompt = `You are an experienced early childhood education expert specializing in Nepal's Complete Pre-Primary System (ECED). 
-      Provide age-appropriate teaching activities for ${className} students (${
-        className === 'Nursery' ? '~3 years' : 
-        className === 'LKG' ? '~4 years' : '~5 years'
-      }). 
-      Focus on activities that: 
-      1. Match the developmental level of ${className} students
-      2. Can be implemented with minimal resources
-      3. Align with ${activityType} goals
-      4. Engage students with different learning speeds and abilities
-      
-      Format your response as a numbered list of 3-5 specific, practical activities. Each activity should include:
-      - A clear, descriptive title
-      - Brief implementation instructions
-      - The specific skill it develops
-      - Expected outcomes`;
-
-    // Make request to OpenAI compatible DeepSeek API
     const response = await axios.post(
-      'https://api.deepseek.com/v1/chat/completions',
+      DEEPSEEK_API_URL,
       {
-        model: MODEL,
+        model: 'deepseek-v3',
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt }
+          {
+            role: 'system',
+            content: 'You are an expert pre-primary education assistant. You provide teaching activity suggestions for Nepali pre-primary teachers working with children aged 3-5 years. Your suggestions should be practical, engaging, and appropriate for the specified age group and learning goals.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
         ],
-        max_tokens: 800,
         temperature: 0.7,
+        max_tokens: 500
       },
       {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
+          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
         }
       }
     );
 
-    const data = response.data as DeepSeekResponse;
-    
-    if (data.choices && data.choices.length > 0) {
-      return data.choices[0].message.content;
-    }
-
-    return null;
+    return response.data.choices[0].message.content;
   } catch (error) {
-    console.error('Error generating suggestions from DeepSeek:', error);
-    return null;
+    console.error('Error getting suggestions from DeepSeek:', error);
+    // Fallback to sample suggestions
+    return generateSampleSuggestions(prompt);
   }
 }
 
-// Cache for storing generated suggestions to support offline use
-const suggestionsCache = new Map<string, { suggestions: string, timestamp: number }>();
+/**
+ * Generates sample suggestions when the API is not available
+ * @param prompt - The original prompt
+ * @returns Sample suggestions based on the prompt
+ */
+function generateSampleSuggestions(prompt: string): string {
+  // Extract class type and activity type from prompt
+  const classMatch = prompt.match(/nursery|lkg|ukg/i);
+  const classType = classMatch ? classMatch[0].toUpperCase() : 'LKG';
+  
+  const activityMatches = [
+    { type: 'storytelling', regex: /story|tell/i, activities: [
+      'Use picture books with large, colorful illustrations',
+      'Incorporate puppets or stuffed animals as story characters',
+      'Create a "story corner" with comfortable seating and props'
+    ]},
+    { type: 'counting', regex: /count|number|math/i, activities: [
+      'Use counting songs with finger actions',
+      'Sort and count natural objects like leaves or stones',
+      'Create a number hunt game around the classroom'
+    ]},
+    { type: 'motor skills', regex: /motor|physical|movement/i, activities: [
+      'Set up a simple obstacle course',
+      'Practice threading large beads on a string',
+      'Trace shapes and letters in sand or rice trays'
+    ]},
+    { type: 'art', regex: /art|craft|draw/i, activities: [
+      'Finger painting with washable, non-toxic paints',
+      'Collage making with natural materials',
+      'Clay or dough modeling of simple shapes'
+    ]}
+  ];
+  
+  // Find matching activity type or default to general
+  const activityType = activityMatches.find(m => m.regex.test(prompt)) || {
+    type: 'general',
+    activities: [
+      'Morning circle time with songs and greetings',
+      'Show and tell sessions with familiar objects',
+      'Nature walks with observation activities'
+    ]
+  };
+  
+  // Generate tailored response based on class type
+  let classSpecificActivities = '';
+  if (classType === 'NURSERY') {
+    classSpecificActivities = 'Focus on sensory activities and basic social interactions.';
+  } else if (classType === 'LKG') {
+    classSpecificActivities = 'Include activities that develop pre-literacy and basic number concepts.';
+  } else if (classType === 'UKG') {
+    classSpecificActivities = 'Incorporate more structured activities that prepare for primary school readiness.';
+  }
+  
+  // Build the response
+  return `
+Here are some suggested ${activityType.type} activities for ${classType} students:
 
-// Function to get suggestions with caching support
-export async function getSuggestionsWithCaching(
-  prompt: string, 
-  className: string,
-  activityType: string
-): Promise<string | null> {
-  const cacheKey = `${className}-${activityType}-${prompt}`;
-  
-  // Check if we have a cached response
-  const cachedResult = suggestionsCache.get(cacheKey);
-  
-  // Return cached result if it exists and is less than 24 hours old
-  if (cachedResult && Date.now() - cachedResult.timestamp < 24 * 60 * 60 * 1000) {
-    return cachedResult.suggestions;
-  }
-  
-  // Generate new suggestions
-  const suggestions = await generateSuggestions(prompt, className, activityType);
-  
-  // Cache the result if successful
-  if (suggestions) {
-    suggestionsCache.set(cacheKey, {
-      suggestions,
-      timestamp: Date.now()
-    });
-  }
-  
-  return suggestions;
+${activityType.activities.map((a, i) => `${i+1}. ${a}`).join('\n')}
+
+Additional suggestions:
+- ${classSpecificActivities}
+- Schedule activities for 15-20 minutes to maintain attention.
+- Include a mix of individual and group activities.
+- Allow for free play and exploration time between structured activities.
+  `;
 }

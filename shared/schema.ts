@@ -1,111 +1,115 @@
-import { pgTable, text, serial, integer, boolean, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Enums for the schema
-export const roleEnum = pgEnum('role', ['admin', 'teacher']);
-export const classEnum = pgEnum('class', ['Nursery', 'LKG', 'UKG']);
-export const learningAbilityEnum = pgEnum('learning_ability', ['Talented', 'Average', 'Slow Learner']);
-export const writingSpeedEnum = pgEnum('writing_speed', ['Speed Writing', 'Slow Writing', 'N/A']);
-export const progressRatingEnum = pgEnum('progress_rating', ['Excellent', 'Good', 'Needs Improvement']);
-export const planTypeEnum = pgEnum('plan_type', ['Annual', 'Monthly', 'Weekly']);
-
-// Users table
+// User model (admin and teachers)
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
   name: text("name").notNull(),
-  role: roleEnum("role").notNull().default('teacher'),
-  assignedClasses: text("assigned_classes").array(),
-  createdAt: timestamp("created_at").defaultNow(),
+  role: text("role", { enum: ["admin", "teacher"] }).default("teacher").notNull(),
+  assignedClasses: json("assigned_classes").$type<string[]>(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// Students table
+export const insertUserSchema = createInsertSchema(users).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Student model
 export const students = pgTable("students", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   age: integer("age").notNull(),
-  class: classEnum("class").notNull(),
+  class: text("class", { enum: ["Nursery", "LKG", "UKG"] }).notNull(),
   parentContact: text("parent_contact"),
-  learningAbility: learningAbilityEnum("learning_ability").notNull(),
-  writingSpeed: writingSpeedEnum("writing_speed").notNull(),
+  learningAbility: text("learning_ability", { enum: ["Talented", "Average", "Slow Learner"] }).notNull(),
+  writingSpeed: text("writing_speed", { enum: ["Speed Writing", "Slow Writing", "N/A"] }).notNull(),
   notes: text("notes"),
   photoUrl: text("photo_url"),
+  photoPublicId: text("photo_public_id"),
   teacherId: integer("teacher_id").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// Progress table
+export const insertStudentSchema = createInsertSchema(students).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Progress model
 export const progress = pgTable("progress", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull().references(() => students.id),
-  date: timestamp("date").defaultNow(),
-  socialSkills: progressRatingEnum("social_skills").notNull(),
-  preLiteracy: progressRatingEnum("pre_literacy").notNull(),
-  preNumeracy: progressRatingEnum("pre_numeracy").notNull(),
-  motorSkills: progressRatingEnum("motor_skills").notNull(),
-  emotionalDevelopment: progressRatingEnum("emotional_development").notNull(),
+  studentId: integer("student_id").references(() => students.id).notNull(),
+  date: timestamp("date").defaultNow().notNull(),
+  socialSkills: text("social_skills", { enum: ["Excellent", "Good", "Needs Improvement"] }).notNull(),
+  preLiteracy: text("pre_literacy", { enum: ["Excellent", "Good", "Needs Improvement"] }).notNull(),
+  preNumeracy: text("pre_numeracy", { enum: ["Excellent", "Good", "Needs Improvement"] }).notNull(),
+  motorSkills: text("motor_skills", { enum: ["Excellent", "Good", "Needs Improvement"] }).notNull(),
+  emotionalDev: text("emotional_dev", { enum: ["Excellent", "Good", "Needs Improvement"] }).notNull(),
   comments: text("comments"),
-  teacherId: integer("teacher_id").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: integer("created_by").references(() => users.id).notNull(),
 });
 
-// Teaching Plans table
+export const insertProgressSchema = createInsertSchema(progress).omit({
+  id: true,
+});
+
+// Teaching Plan model
 export const teachingPlans = pgTable("teaching_plans", {
   id: serial("id").primaryKey(),
-  type: planTypeEnum("type").notNull(),
-  class: classEnum("class").notNull(),
+  type: text("type", { enum: ["Annual", "Monthly", "Weekly"] }).notNull(),
+  class: text("class", { enum: ["Nursery", "LKG", "UKG"] }).notNull(),
   title: text("title").notNull(),
   description: text("description").notNull(),
   activities: text("activities").notNull(),
   goals: text("goals").notNull(),
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date").notNull(),
-  teacherId: integer("teacher_id").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: integer("created_by").references(() => users.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// Recent Activities table
-export const activities = pgTable("activities", {
+export const insertTeachingPlanSchema = createInsertSchema(teachingPlans).omit({
+  id: true,
+  createdAt: true,
+});
+
+// AI Suggestions model (for caching)
+export const aiSuggestions = pgTable("ai_suggestions", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id),
-  action: text("action").notNull(),
-  details: text("details").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
+  prompt: text("prompt").notNull(),
+  response: text("response").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// Zod schemas for validation and type inference
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
-export const insertStudentSchema = createInsertSchema(students).omit({ id: true, createdAt: true });
-export const insertProgressSchema = createInsertSchema(progress).omit({ id: true, createdAt: true });
-export const insertTeachingPlanSchema = createInsertSchema(teachingPlans).omit({ id: true, createdAt: true });
-export const insertActivitySchema = createInsertSchema(activities).omit({ id: true, createdAt: true });
-
-// For user login
-export const loginUserSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
+export const insertAiSuggestionSchema = createInsertSchema(aiSuggestions).omit({
+  id: true,
+  createdAt: true,
 });
 
-// Types for easier use in application
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type InsertStudent = z.infer<typeof insertStudentSchema>;
-export type InsertProgress = z.infer<typeof insertProgressSchema>;
-export type InsertTeachingPlan = z.infer<typeof insertTeachingPlanSchema>;
-export type InsertActivity = z.infer<typeof insertActivitySchema>;
-export type LoginUser = z.infer<typeof loginUserSchema>;
-
+// Type definitions
 export type User = typeof users.$inferSelect;
-export type Student = typeof students.$inferSelect;
-export type Progress = typeof progress.$inferSelect;
-export type TeachingPlan = typeof teachingPlans.$inferSelect;
-export type Activity = typeof activities.$inferSelect;
+export type InsertUser = z.infer<typeof insertUserSchema>;
 
-// Type for role-based access control
-export type Role = 'admin' | 'teacher';
-export type Class = 'Nursery' | 'LKG' | 'UKG';
-export type LearningAbility = 'Talented' | 'Average' | 'Slow Learner';
-export type WritingSpeed = 'Speed Writing' | 'Slow Writing' | 'N/A';
-export type ProgressRating = 'Excellent' | 'Good' | 'Needs Improvement';
-export type PlanType = 'Annual' | 'Monthly' | 'Weekly';
+export type Student = typeof students.$inferSelect;
+export type InsertStudent = z.infer<typeof insertStudentSchema>;
+
+export type Progress = typeof progress.$inferSelect;
+export type InsertProgress = z.infer<typeof insertProgressSchema>;
+
+export type TeachingPlan = typeof teachingPlans.$inferSelect;
+export type InsertTeachingPlan = z.infer<typeof insertTeachingPlanSchema>;
+
+export type AiSuggestion = typeof aiSuggestions.$inferSelect;
+export type InsertAiSuggestion = z.infer<typeof insertAiSuggestionSchema>;
+
+// Extended schemas with validation
+export const loginSchema = z.object({
+  email: z.string().email({ message: "Invalid email address" }),
+  password: z.string().min(5, { message: "Password must be at least 5 characters" }),
+});
+
+export type LoginCredentials = z.infer<typeof loginSchema>;

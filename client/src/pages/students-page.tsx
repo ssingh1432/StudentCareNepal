@@ -1,173 +1,278 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useLocation } from 'wouter';
-import { Sidebar } from '@/components/layout/sidebar';
-import { Header } from '@/components/layout/header';
-import { StudentList } from '@/components/students/student-list';
-import { StudentForm } from '@/components/students/student-form';
-import { Button } from '@/components/ui/button';
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { AppLayout } from "@/components/layout/app-layout";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { DataTable } from "@/components/ui/data-table";
+import { Badge } from "@/components/ui/badge";
 import { 
-  PlusIcon, 
-  SearchIcon,
-  FilterIcon 
-} from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { useAuth } from '@/hooks/use-auth';
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
+import { Link } from "wouter";
 import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogHeader, 
-  DialogTitle
-} from '@/components/ui/dialog';
-import { 
-  classOptions,
-  learningAbilityOptions,
-  Student
-} from '@shared/schema';
+  getClassColorClass, 
+  getLearningAbilityColorClass, 
+  getWritingSpeedColorClass,
+  formatCloudinaryUrl
+} from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ChevronRight, Edit, Trash2, UserPlus, BarChart } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import { Student, User } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 export default function StudentsPage() {
   const { user } = useAuth();
-  const [location] = useLocation();
-  
-  // Extract query params
-  const params = new URLSearchParams(location.split('?')[1]);
-  const initialAction = params.get('action');
-  
-  // State for filtering and actions
-  const [classFilter, setClassFilter] = useState<string>("all");
-  const [abilityFilter, setAbilityFilter] = useState<string>("all");
-  const [teacherFilter, setTeacherFilter] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [showAddForm, setShowAddForm] = useState<boolean>(initialAction === 'add');
-  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
-
-  // Fetch students with filters
-  const { data: students, isLoading, refetch } = useQuery({
-    queryKey: ['/api/students', { class: classFilter === 'all' ? undefined : classFilter, teacherId: teacherFilter === 'all' ? undefined : teacherFilter }],
-    retry: false,
+  const { toast } = useToast();
+  const [filters, setFilters] = useState({
+    class: "all",
+    learningAbility: "all",
+    teacher: "all",
+    search: ""
   });
 
-  // Fetch teachers if admin
-  const { data: teachers } = useQuery({
-    queryKey: ['/api/teachers'],
-    enabled: user?.role === 'admin',
-    retry: false,
+  // Fetch students
+  const { data: students = [], isLoading } = useQuery<Student[]>({
+    queryKey: ["/api/students"],
   });
 
-  // Filter students by search query and ability
-  const filteredStudents = students?.filter((student: Student) => {
-    const matchesSearch = searchQuery === "" || 
-      student.name.toLowerCase().includes(searchQuery.toLowerCase());
+  // Fetch teachers (for filtering by teacher - admin only)
+  const { data: teachers = [] } = useQuery<User[]>({
+    queryKey: ["/api/teachers"],
+    enabled: user?.role === "admin"
+  });
+
+  // Create map of teacher IDs to names
+  const teacherNames: Record<number, string> = {};
+  teachers.forEach(teacher => {
+    teacherNames[teacher.id] = teacher.name;
+  });
+
+  // Apply filters
+  const filteredStudents = students.filter(student => {
+    // Filter by class
+    if (filters.class !== "all" && student.class !== filters.class) {
+      return false;
+    }
     
-    const matchesAbility = abilityFilter === "all" || 
-      student.learningAbility === abilityFilter;
+    // Filter by learning ability
+    if (filters.learningAbility !== "all" && student.learningAbility !== filters.learningAbility) {
+      return false;
+    }
     
-    return matchesSearch && matchesAbility;
+    // Filter by teacher (admin only)
+    if (user?.role === "admin" && filters.teacher !== "all" && student.teacherId !== parseInt(filters.teacher)) {
+      return false;
+    }
+    
+    // Filter by search term
+    if (filters.search && !student.name.toLowerCase().includes(filters.search.toLowerCase())) {
+      return false;
+    }
+    
+    return true;
   });
 
-  // Handlers
-  const handleAddStudent = () => {
-    setEditingStudent(null);
-    setShowAddForm(true);
+  // Function to delete a student
+  const handleDeleteStudent = async (studentId: number) => {
+    if (!confirm("Are you sure you want to delete this student? This action cannot be undone.")) {
+      return;
+    }
+    
+    try {
+      await apiRequest("DELETE", `/api/students/${studentId}`);
+      
+      // Invalidate the students query to refresh the data
+      queryClient.invalidateQueries({queryKey: ["/api/students"]});
+      
+      toast({
+        title: "Student deleted",
+        description: "The student has been successfully deleted.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete student. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleEditStudent = (student: Student) => {
-    setEditingStudent(student);
-    setShowAddForm(true);
-  };
-
-  const handleCloseForm = () => {
-    setShowAddForm(false);
-    setEditingStudent(null);
-    refetch();
-  };
+  // Table columns definition
+  const columns = [
+    {
+      header: "Student",
+      accessorKey: "name",
+      cell: (student: Student) => (
+        <div className="flex items-center">
+          <Avatar className="h-10 w-10 mr-4">
+            <AvatarImage 
+              src={student.photoUrl ? formatCloudinaryUrl(student.photoUrl, { width: 40, height: 40 }) : undefined} 
+              alt={student.name} 
+            />
+            <AvatarFallback>{student.name.charAt(0)}</AvatarFallback>
+          </Avatar>
+          <div>
+            <div className="font-medium text-gray-900">{student.name}</div>
+            <div className="text-sm text-gray-500">{student.age} years</div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      header: "Class",
+      accessorKey: "class",
+      cell: (student: Student) => (
+        <Badge className={getClassColorClass(student.class)}>
+          {student.class}
+        </Badge>
+      ),
+    },
+    {
+      header: "Learning Ability",
+      accessorKey: "learningAbility",
+      cell: (student: Student) => (
+        <Badge className={getLearningAbilityColorClass(student.learningAbility)}>
+          {student.learningAbility}
+        </Badge>
+      ),
+    },
+    {
+      header: "Writing Speed",
+      accessorKey: "writingSpeed",
+      cell: (student: Student) => (
+        <Badge className={getWritingSpeedColorClass(student.writingSpeed)}>
+          {student.writingSpeed}
+        </Badge>
+      ),
+    },
+    {
+      header: "Teacher",
+      accessorKey: "teacherId",
+      cell: (student: Student) => (
+        <span className="text-gray-600">
+          {student.teacherId && teacherNames[student.teacherId] 
+            ? teacherNames[student.teacherId] 
+            : "Not Assigned"}
+        </span>
+      ),
+    },
+    {
+      header: "Actions",
+      accessorKey: "id",
+      cell: (student: Student) => (
+        <div className="flex justify-end space-x-2">
+          <Link href={`/progress/new?studentId=${student.id}`}>
+            <Button variant="ghost" size="sm">
+              <BarChart className="h-4 w-4 mr-1" />
+              <span className="sr-only md:not-sr-only md:ml-1">Progress</span>
+            </Button>
+          </Link>
+          <Link href={`/students/${student.id}`}>
+            <Button variant="ghost" size="sm">
+              <Edit className="h-4 w-4 mr-1" />
+              <span className="sr-only md:not-sr-only md:ml-1">Edit</span>
+            </Button>
+          </Link>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="text-red-600 hover:text-red-800 hover:bg-red-50"
+            onClick={() => handleDeleteStudent(student.id)}
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            <span className="sr-only md:not-sr-only md:ml-1">Delete</span>
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
-      
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header title="Student Management" />
-        
-        <main className="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-6">
-          <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">Student Management</h2>
-              <p className="mt-1 text-sm text-gray-500">Manage all students in the pre-primary section</p>
-            </div>
-            
-            <div className="mt-4 md:mt-0 flex-shrink-0">
-              <Button 
-                onClick={handleAddStudent}
-                className="inline-flex items-center px-4 py-2 bg-purple-600 hover:bg-purple-700"
-              >
-                <PlusIcon className="mr-2 h-4 w-4" />
-                Add Student
-              </Button>
-            </div>
+    <AppLayout title="Student Management">
+      <div className="space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Student Management</h2>
+            <p className="mt-1 text-sm text-gray-500">Manage all students in the pre-primary section</p>
           </div>
           
-          {/* Filter Controls */}
-          <div className="bg-white p-4 shadow rounded-lg mb-6">
+          <div className="mt-4 md:mt-0 flex-shrink-0">
+            <Link href="/students/new">
+              <Button>
+                <UserPlus className="h-4 w-4 mr-2" />
+                Add Student
+              </Button>
+            </Link>
+          </div>
+        </div>
+
+        {/* Filter Controls */}
+        <Card>
+          <CardContent className="p-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <label htmlFor="class-filter" className="block text-sm font-medium text-gray-700">Class</label>
-                <Select 
-                  value={classFilter} 
-                  onValueChange={setClassFilter}
+                <label htmlFor="class-filter" className="block text-sm font-medium text-gray-700 mb-1">
+                  Class
+                </label>
+                <Select
+                  value={filters.class}
+                  onValueChange={(value) => setFilters({ ...filters, class: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="class-filter">
                     <SelectValue placeholder="All Classes" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Classes</SelectItem>
-                    {classOptions.map((cls) => (
-                      <SelectItem key={cls} value={cls}>{cls}</SelectItem>
-                    ))}
+                    <SelectItem value="Nursery">Nursery</SelectItem>
+                    <SelectItem value="LKG">LKG</SelectItem>
+                    <SelectItem value="UKG">UKG</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               
               <div>
-                <label htmlFor="ability-filter" className="block text-sm font-medium text-gray-700">Learning Ability</label>
-                <Select 
-                  value={abilityFilter} 
-                  onValueChange={setAbilityFilter}
+                <label htmlFor="ability-filter" className="block text-sm font-medium text-gray-700 mb-1">
+                  Learning Ability
+                </label>
+                <Select
+                  value={filters.learningAbility}
+                  onValueChange={(value) => setFilters({ ...filters, learningAbility: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="ability-filter">
                     <SelectValue placeholder="All Abilities" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Abilities</SelectItem>
-                    {learningAbilityOptions.map((ability) => (
-                      <SelectItem key={ability} value={ability}>{ability}</SelectItem>
-                    ))}
+                    <SelectItem value="Talented">Talented</SelectItem>
+                    <SelectItem value="Average">Average</SelectItem>
+                    <SelectItem value="Slow Learner">Slow Learner</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               
-              {user?.role === 'admin' && (
+              {user?.role === "admin" && (
                 <div>
-                  <label htmlFor="teacher-filter" className="block text-sm font-medium text-gray-700">Teacher</label>
-                  <Select 
-                    value={teacherFilter} 
-                    onValueChange={setTeacherFilter}
+                  <label htmlFor="teacher-filter" className="block text-sm font-medium text-gray-700 mb-1">
+                    Teacher
+                  </label>
+                  <Select
+                    value={filters.teacher}
+                    onValueChange={(value) => setFilters({ ...filters, teacher: value })}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="teacher-filter">
                       <SelectValue placeholder="All Teachers" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Teachers</SelectItem>
-                      {teachers?.map((teacher: any) => (
-                        <SelectItem key={teacher.id} value={String(teacher.id)}>
+                      {teachers.map((teacher) => (
+                        <SelectItem key={teacher.id} value={teacher.id.toString()}>
                           {teacher.name}
                         </SelectItem>
                       ))}
@@ -177,53 +282,40 @@ export default function StudentsPage() {
               )}
               
               <div>
-                <label htmlFor="search-filter" className="block text-sm font-medium text-gray-700">Search</label>
-                <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <SearchIcon className="text-gray-400 h-4 w-4" />
-                  </div>
-                  <Input
-                    type="text"
-                    id="search-filter"
-                    className="pl-10"
-                    placeholder="Student name"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                </div>
+                <label htmlFor="search-filter" className="block text-sm font-medium text-gray-700 mb-1">
+                  Search
+                </label>
+                <Input
+                  id="search-filter"
+                  type="text"
+                  placeholder="Student name"
+                  value={filters.search}
+                  onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                />
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Students List */}
+        <Card>
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg font-medium text-gray-900">Students</h3>
+            <Badge variant="secondary" className="bg-purple-100 text-purple-800">
+              {filteredStudents.length} Total
+            </Badge>
           </div>
           
-          {/* Students List */}
-          <StudentList 
-            students={filteredStudents || []} 
-            isLoading={isLoading}
-            onEdit={handleEditStudent}
-            onRefresh={refetch}
-          />
-          
-          {/* Add/Edit Student Dialog */}
-          <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
-            <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingStudent ? 'Edit Student' : 'Add New Student'}
-                </DialogTitle>
-                <DialogDescription>
-                  {editingStudent 
-                    ? 'Update the student information below.' 
-                    : 'Fill out the form below to add a new student.'}
-                </DialogDescription>
-              </DialogHeader>
-              <StudentForm 
-                student={editingStudent}
-                onClose={handleCloseForm}
-              />
-            </DialogContent>
-          </Dialog>
-        </main>
+          <div className="px-4 py-4">
+            <DataTable
+              data={filteredStudents}
+              columns={columns}
+              searchPlaceholder="Search students..."
+              searchKeys={["name"]}
+            />
+          </div>
+        </Card>
       </div>
-    </div>
+    </AppLayout>
   );
 }

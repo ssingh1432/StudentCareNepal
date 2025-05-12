@@ -1,171 +1,391 @@
-import * as XLSX from 'xlsx';
-import { Student, Progress, TeachingPlan } from '@shared/schema';
+import * as xlsx from 'xlsx';
+import { Student, ProgressEntry, TeachingPlan } from '@shared/schema';
+import { IStorage } from './storage';
 
-// Function to generate a student progress Excel report
-export function generateStudentProgressExcel(
-  students: Student[],
-  progressRecords: Map<number, Progress[]>,
-  className?: string
-): Buffer {
-  // Create a new workbook
-  const workbook = XLSX.utils.book_new();
+interface ReportOptions {
+  startDate?: string;
+  endDate?: string;
+  templateType?: 'studentProgress' | 'teachingPlans';
+  storage?: IStorage;
+}
+
+/**
+ * Generate an Excel report for students or teaching plans
+ */
+export async function generateExcelReport(
+  data: Student[] | TeachingPlan[],
+  options: ReportOptions
+): Promise<Buffer> {
+  const templateType = options.templateType || 'studentProgress';
+  let workbook: xlsx.WorkBook;
   
-  // Create worksheet for student data
-  const studentData = students.map(student => ({
-    'Name': student.name,
-    'Class': student.class,
-    'Age': student.age,
-    'Learning Ability': student.learningAbility,
-    'Writing Speed': student.writingSpeed || 'N/A',
-    'Parent Contact': student.parentContact || 'N/A'
-  }));
-  
-  const studentWs = XLSX.utils.json_to_sheet(studentData);
-  XLSX.utils.book_append_sheet(workbook, studentWs, 'Students');
-  
-  // Create worksheet for latest progress
-  const progressData = students.map(student => {
-    const studentProgressEntries = progressRecords.get(student.id) || [];
-    
-    // Sort by date and get the latest entry
-    const latestEntry = studentProgressEntries.length > 0 
-      ? studentProgressEntries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
-      : null;
-    
-    return {
-      'Student Name': student.name,
-      'Class': student.class,
-      'Learning Ability': student.learningAbility,
-      'Writing Speed': student.writingSpeed || 'N/A',
-      'Latest Assessment Date': latestEntry ? new Date(latestEntry.date).toLocaleDateString() : 'No data',
-      'Social Skills': latestEntry?.socialSkills || 'No data',
-      'Pre-Literacy': latestEntry?.preLiteracy || 'No data',
-      'Pre-Numeracy': latestEntry?.preNumeracy || 'No data',
-      'Motor Skills': latestEntry?.motorSkills || 'No data',
-      'Emotional Development': latestEntry?.emotionalDevelopment || 'No data',
-      'Comments': latestEntry?.comments || ''
-    };
-  });
-  
-  const progressWs = XLSX.utils.json_to_sheet(progressData);
-  XLSX.utils.book_append_sheet(workbook, progressWs, 'Latest Progress');
-  
-  // Create worksheet for all progress entries
-  const allProgressData: any[] = [];
-  
-  students.forEach(student => {
-    const studentProgressEntries = progressRecords.get(student.id) || [];
-    
-    studentProgressEntries.forEach(entry => {
-      allProgressData.push({
-        'Student Name': student.name,
-        'Class': student.class,
-        'Assessment Date': new Date(entry.date).toLocaleDateString(),
-        'Social Skills': entry.socialSkills,
-        'Pre-Literacy': entry.preLiteracy,
-        'Pre-Numeracy': entry.preNumeracy,
-        'Motor Skills': entry.motorSkills,
-        'Emotional Development': entry.emotionalDevelopment,
-        'Comments': entry.comments || ''
-      });
-    });
-  });
-  
-  if (allProgressData.length > 0) {
-    const allProgressWs = XLSX.utils.json_to_sheet(allProgressData);
-    XLSX.utils.book_append_sheet(workbook, allProgressWs, 'All Progress Entries');
+  if (templateType === 'studentProgress') {
+    workbook = await generateStudentProgressExcel(data as Student[], options);
+  } else {
+    workbook = generateTeachingPlansExcel(data as TeachingPlan[]);
   }
   
-  // Generate report title with filters
-  let title = 'Student Progress Report';
-  if (className) {
-    title += ` - ${className}`;
-  }
-  title += ` (Generated: ${new Date().toLocaleDateString()})`;
-  
-  // Add report info sheet
-  const reportInfoData = [
-    { 'Report': title },
-    { 'Report': `Total Students: ${students.length}` },
-    { 'Report': `Generated On: ${new Date().toLocaleString()}` },
-    { 'Report': 'Nepal Central High School, Narephat, Kathmandu' }
-  ];
-  
-  const reportInfoWs = XLSX.utils.json_to_sheet(reportInfoData);
-  XLSX.utils.book_append_sheet(workbook, reportInfoWs, 'Report Info');
-  
-  // Generate buffer
-  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-  
+  // Write to buffer
+  const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
   return buffer;
 }
 
-// Function to generate a teaching plan Excel report
-export function generateTeachingPlanExcel(
-  plans: TeachingPlan[],
-  teacherNames: Map<number, string>,
-  type?: string,
-  className?: string
-): Buffer {
-  // Create a new workbook
-  const workbook = XLSX.utils.book_new();
+/**
+ * Generate student progress Excel report
+ */
+async function generateStudentProgressExcel(
+  students: Student[],
+  options: ReportOptions
+): Promise<xlsx.WorkBook> {
+  const workbook = xlsx.utils.book_new();
   
-  // Create worksheet for plan data
-  const planData = plans.map(plan => ({
-    'Title': plan.title,
-    'Type': plan.type,
-    'Class': plan.class,
-    'Start Date': new Date(plan.startDate).toLocaleDateString(),
-    'End Date': new Date(plan.endDate).toLocaleDateString(),
-    'Teacher': teacherNames.get(plan.teacherId) || 'Unknown',
-    'Created At': new Date(plan.createdAt).toLocaleDateString()
-  }));
+  // Create overview sheet
+  const overviewData: any[] = [];
   
-  const plansWs = XLSX.utils.json_to_sheet(planData);
-  XLSX.utils.book_append_sheet(workbook, plansWs, 'Plans Overview');
+  // Add headers
+  overviewData.push([
+    'Nepal Central High School - Student Progress Report',
+    '', '', '', '', ''
+  ]);
   
-  // Create detailed worksheet for each plan
-  plans.forEach((plan, index) => {
-    const detailedPlanData = [
-      { 'Field': 'Title', 'Value': plan.title },
-      { 'Field': 'Type', 'Value': plan.type },
-      { 'Field': 'Class', 'Value': plan.class },
-      { 'Field': 'Start Date', 'Value': new Date(plan.startDate).toLocaleDateString() },
-      { 'Field': 'End Date', 'Value': new Date(plan.endDate).toLocaleDateString() },
-      { 'Field': 'Teacher', 'Value': teacherNames.get(plan.teacherId) || 'Unknown' },
-      { 'Field': 'Description', 'Value': plan.description },
-      { 'Field': 'Activities', 'Value': plan.activities },
-      { 'Field': 'Learning Goals', 'Value': plan.goals },
-      { 'Field': 'Created At', 'Value': new Date(plan.createdAt).toLocaleDateString() }
-    ];
+  if (options.startDate && options.endDate) {
+    overviewData.push([
+      `Period: ${options.startDate} to ${options.endDate}`,
+      '', '', '', '', ''
+    ]);
+  }
+  
+  overviewData.push(['', '', '', '', '', '']);
+  
+  // Add column headers
+  overviewData.push([
+    'Name',
+    'Age',
+    'Class',
+    'Learning Ability',
+    'Writing Speed',
+    'Latest Progress'
+  ]);
+  
+  // Add student data
+  for (const student of students) {
+    let latestProgress = 'No data';
     
-    const detailWs = XLSX.utils.json_to_sheet(detailedPlanData);
-    XLSX.utils.book_append_sheet(workbook, detailWs, `Plan ${index + 1} Detail`);
-  });
-  
-  // Generate report title with filters
-  let title = 'Teaching Plans Report';
-  if (type) {
-    title += ` - ${type}`;
+    if (options.storage) {
+      const progressEntries = await options.storage.getProgressEntriesByStudentId(student.id);
+      if (progressEntries.length > 0) {
+        const latest = progressEntries[0]; // Assuming sorted by date desc
+        latestProgress = `Social: ${formatEnumValue(latest.socialSkills)}, `
+          + `Literacy: ${formatEnumValue(latest.preLiteracy)}, `
+          + `Numeracy: ${formatEnumValue(latest.preNumeracy)}`;
+      }
+    }
+    
+    overviewData.push([
+      student.name,
+      student.age,
+      student.classType.toUpperCase(),
+      formatEnumValue(student.learningAbility),
+      formatEnumValue(student.writingSpeed),
+      latestProgress
+    ]);
   }
-  if (className) {
-    title += ` - ${className}`;
-  }
-  title += ` (Generated: ${new Date().toLocaleDateString()})`;
   
-  // Add report info sheet
-  const reportInfoData = [
-    { 'Report': title },
-    { 'Report': `Total Plans: ${plans.length}` },
-    { 'Report': `Generated On: ${new Date().toLocaleString()}` },
-    { 'Report': 'Nepal Central High School, Narephat, Kathmandu' }
+  // Create worksheet
+  const worksheet = xlsx.utils.aoa_to_sheet(overviewData);
+  
+  // Set column widths
+  const colWidths = [
+    { wch: 25 }, // Name
+    { wch: 6 },  // Age
+    { wch: 8 },  // Class
+    { wch: 15 }, // Learning Ability
+    { wch: 15 }, // Writing Speed
+    { wch: 60 }  // Latest Progress
   ];
   
-  const reportInfoWs = XLSX.utils.json_to_sheet(reportInfoData);
-  XLSX.utils.book_append_sheet(workbook, reportInfoWs, 'Report Info');
+  worksheet['!cols'] = colWidths;
   
-  // Generate buffer
-  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  // Style header row
+  for (let i = 0; i < 6; i++) {
+    const cellRef = xlsx.utils.encode_cell({ r: 3, c: i });
+    worksheet[cellRef].s = {
+      font: { bold: true },
+      fill: { fgColor: { rgb: "EDE9FE" } } // Light purple background
+    };
+  }
   
-  return buffer;
+  // Add worksheet to workbook
+  xlsx.utils.book_append_sheet(workbook, worksheet, 'Student Overview');
+  
+  // Create individual class sheets
+  const classTypes = ['nursery', 'lkg', 'ukg'];
+  
+  for (const classType of classTypes) {
+    const classStudents = students.filter(s => s.classType === classType);
+    
+    if (classStudents.length > 0) {
+      const classSheetData: any[] = [];
+      
+      // Add header
+      classSheetData.push([
+        `${classType.toUpperCase()} Class - Student Progress Report`,
+        '', '', '', '', ''
+      ]);
+      
+      classSheetData.push(['', '', '', '', '', '']);
+      
+      // Add column headers
+      classSheetData.push([
+        'Name',
+        'Age',
+        'Learning Ability',
+        'Writing Speed',
+        'Social Skills',
+        'Pre-Literacy',
+        'Pre-Numeracy',
+        'Motor Skills',
+        'Emotional Dev.'
+      ]);
+      
+      // Add student data
+      for (const student of classStudents) {
+        let socialSkills = '';
+        let preLiteracy = '';
+        let preNumeracy = '';
+        let motorSkills = '';
+        let emotionalDev = '';
+        
+        if (options.storage) {
+          const progressEntries = await options.storage.getProgressEntriesByStudentId(student.id);
+          if (progressEntries.length > 0) {
+            const latest = progressEntries[0]; // Assuming sorted by date desc
+            socialSkills = formatEnumValue(latest.socialSkills);
+            preLiteracy = formatEnumValue(latest.preLiteracy);
+            preNumeracy = formatEnumValue(latest.preNumeracy);
+            motorSkills = formatEnumValue(latest.motorSkills);
+            emotionalDev = formatEnumValue(latest.emotionalDevelopment);
+          }
+        }
+        
+        classSheetData.push([
+          student.name,
+          student.age,
+          formatEnumValue(student.learningAbility),
+          formatEnumValue(student.writingSpeed),
+          socialSkills,
+          preLiteracy,
+          preNumeracy,
+          motorSkills,
+          emotionalDev
+        ]);
+      }
+      
+      // Create worksheet
+      const classWorksheet = xlsx.utils.aoa_to_sheet(classSheetData);
+      
+      // Style header row
+      for (let i = 0; i < 9; i++) {
+        const cellRef = xlsx.utils.encode_cell({ r: 2, c: i });
+        classWorksheet[cellRef].s = {
+          font: { bold: true },
+          fill: { fgColor: { rgb: "EDE9FE" } } // Light purple background
+        };
+      }
+      
+      // Add worksheet to workbook
+      xlsx.utils.book_append_sheet(workbook, classWorksheet, classType.toUpperCase());
+    }
+  }
+  
+  return workbook;
+}
+
+/**
+ * Generate teaching plans Excel report
+ */
+function generateTeachingPlansExcel(plans: TeachingPlan[]): xlsx.WorkBook {
+  const workbook = xlsx.utils.book_new();
+  
+  // Create overview sheet
+  const overviewData: any[] = [];
+  
+  // Add header
+  overviewData.push([
+    'Nepal Central High School - Teaching Plans Report',
+    '', '', '', '', ''
+  ]);
+  
+  overviewData.push(['', '', '', '', '', '']);
+  
+  // Add column headers
+  overviewData.push([
+    'Title',
+    'Type',
+    'Class',
+    'Start Date',
+    'End Date',
+    'Description'
+  ]);
+  
+  // Add plan data
+  for (const plan of plans) {
+    overviewData.push([
+      plan.title,
+      formatEnumValue(plan.type),
+      plan.classType.toUpperCase(),
+      new Date(plan.startDate).toLocaleDateString(),
+      new Date(plan.endDate).toLocaleDateString(),
+      plan.description
+    ]);
+  }
+  
+  // Create worksheet
+  const worksheet = xlsx.utils.aoa_to_sheet(overviewData);
+  
+  // Set column widths
+  const colWidths = [
+    { wch: 30 }, // Title
+    { wch: 10 }, // Type
+    { wch: 8 },  // Class
+    { wch: 12 }, // Start Date
+    { wch: 12 }, // End Date
+    { wch: 50 }  // Description
+  ];
+  
+  worksheet['!cols'] = colWidths;
+  
+  // Style header row
+  for (let i = 0; i < 6; i++) {
+    const cellRef = xlsx.utils.encode_cell({ r: 2, c: i });
+    worksheet[cellRef].s = {
+      font: { bold: true },
+      fill: { fgColor: { rgb: "EDE9FE" } } // Light purple background
+    };
+  }
+  
+  // Add worksheet to workbook
+  xlsx.utils.book_append_sheet(workbook, worksheet, 'Plans Overview');
+  
+  // Create detail sheet with activities and goals
+  const detailData: any[] = [];
+  
+  // Add header
+  detailData.push([
+    'Nepal Central High School - Teaching Plan Details',
+    '', '', ''
+  ]);
+  
+  detailData.push(['', '', '', '']);
+  
+  // Add column headers
+  detailData.push([
+    'Title',
+    'Class',
+    'Activities',
+    'Goals'
+  ]);
+  
+  // Add plan details
+  for (const plan of plans) {
+    detailData.push([
+      plan.title,
+      plan.classType.toUpperCase(),
+      plan.activities,
+      plan.goals
+    ]);
+  }
+  
+  // Create worksheet
+  const detailWorksheet = xlsx.utils.aoa_to_sheet(detailData);
+  
+  // Set column widths
+  const detailColWidths = [
+    { wch: 30 }, // Title
+    { wch: 8 },  // Class
+    { wch: 60 }, // Activities
+    { wch: 60 }  // Goals
+  ];
+  
+  detailWorksheet['!cols'] = detailColWidths;
+  
+  // Style header row
+  for (let i = 0; i < 4; i++) {
+    const cellRef = xlsx.utils.encode_cell({ r: 2, c: i });
+    detailWorksheet[cellRef].s = {
+      font: { bold: true },
+      fill: { fgColor: { rgb: "EDE9FE" } } // Light purple background
+    };
+  }
+  
+  // Add worksheet to workbook
+  xlsx.utils.book_append_sheet(workbook, detailWorksheet, 'Plan Details');
+  
+  // Create sheets by class type
+  const classTypes = ['nursery', 'lkg', 'ukg'];
+  
+  for (const classType of classTypes) {
+    const classPlans = plans.filter(p => p.classType === classType);
+    
+    if (classPlans.length > 0) {
+      const classSheetData: any[] = [];
+      
+      // Add header
+      classSheetData.push([
+        `${classType.toUpperCase()} Class - Teaching Plans`,
+        '', '', '', ''
+      ]);
+      
+      classSheetData.push(['', '', '', '', '']);
+      
+      // Add column headers
+      classSheetData.push([
+        'Title',
+        'Type',
+        'Period',
+        'Activities',
+        'Goals'
+      ]);
+      
+      // Add plan data
+      for (const plan of classPlans) {
+        classSheetData.push([
+          plan.title,
+          formatEnumValue(plan.type),
+          `${new Date(plan.startDate).toLocaleDateString()} - ${new Date(plan.endDate).toLocaleDateString()}`,
+          plan.activities,
+          plan.goals
+        ]);
+      }
+      
+      // Create worksheet
+      const classWorksheet = xlsx.utils.aoa_to_sheet(classSheetData);
+      
+      // Style header row
+      for (let i = 0; i < 5; i++) {
+        const cellRef = xlsx.utils.encode_cell({ r: 2, c: i });
+        classWorksheet[cellRef].s = {
+          font: { bold: true },
+          fill: { fgColor: { rgb: "EDE9FE" } } // Light purple background
+        };
+      }
+      
+      // Add worksheet to workbook
+      xlsx.utils.book_append_sheet(workbook, classWorksheet, `${classType.toUpperCase()} Plans`);
+    }
+  }
+  
+  return workbook;
+}
+
+/**
+ * Format enum values for display
+ */
+function formatEnumValue(value: string): string {
+  if (!value) return 'N/A';
+  
+  return value
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }

@@ -1,154 +1,149 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { InsertStudent, insertStudentSchema } from "@shared/schema";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
-import { CloudinaryUpload } from "@/components/common/cloudinary-upload";
+import { Student, insertStudentSchema } from "@shared/schema";
 
+import { Button } from "@/components/ui/button";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-
-// Extend the student schema for the form
-const studentFormSchema = insertStudentSchema.extend({
-  photoFile: z.any().optional(),
-});
-
-type StudentFormValues = z.infer<typeof studentFormSchema>;
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { FileUpload } from "@/components/ui/file-upload";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query";
 
 interface StudentFormProps {
-  open: boolean;
-  onClose: () => void;
-  editingStudent?: { id: number } & Partial<InsertStudent>;
+  initialData?: Partial<Student>;
+  onSuccess?: () => void;
+  onCancel?: () => void;
+  isEditMode?: boolean;
 }
 
-export function StudentForm({ open, onClose, editingStudent }: StudentFormProps) {
+export function StudentForm({
+  initialData,
+  onSuccess,
+  onCancel,
+  isEditMode = false,
+}: StudentFormProps) {
   const { toast } = useToast();
-  const { user, isAdmin } = useAuth();
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(editingStudent?.photoUrl || null);
+  const { user } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  // Fetch teachers for assigning students (admin only)
-  const { data: teachers } = useQuery({
-    queryKey: ['/api/teachers'],
-    enabled: isAdmin && open,
-  });
+  // Extended schema with file validation
+  const formSchema = insertStudentSchema;
 
-  // Form initialization
-  const form = useForm<StudentFormValues>({
-    resolver: zodResolver(studentFormSchema),
+  const form = useForm({
+    resolver: zodResolver(formSchema),
     defaultValues: {
-      name: editingStudent?.name || "",
-      age: editingStudent?.age || 3,
-      class: editingStudent?.class || "Nursery",
-      parentContact: editingStudent?.parentContact || "",
-      learningAbility: editingStudent?.learningAbility || "Average",
-      writingSpeed: editingStudent?.writingSpeed || "N/A",
-      notes: editingStudent?.notes || "",
-      teacherId: editingStudent?.teacherId || user?.id,
-      photoUrl: editingStudent?.photoUrl || "",
+      name: initialData?.name || "",
+      age: initialData?.age || 3,
+      classType: initialData?.classType || "nursery",
+      parentContact: initialData?.parentContact || "",
+      learningAbility: initialData?.learningAbility || "average",
+      writingSpeed: initialData?.writingSpeed || "not_applicable",
+      notes: initialData?.notes || "",
+      assignedTeacherId: initialData?.assignedTeacherId || undefined,
     },
   });
 
-  // Create/update student mutation
-  const mutation = useMutation({
-    mutationFn: async (values: StudentFormValues) => {
+  // Fetch teachers for admin selection
+  const { data: teachers = [] } = useQuery<any[]>({
+    queryKey: ["/api/teachers"],
+    enabled: user?.role === "admin",
+  });
+
+  const onSubmit = async (data: any) => {
+    setIsLoading(true);
+    try {
+      // Create FormData for file upload
       const formData = new FormData();
       
-      // Remove the file from values and send it separately
-      const { photoFile, ...studentData } = values;
-      
       // Add student data as JSON
-      formData.append('data', JSON.stringify(studentData));
+      formData.append("data", JSON.stringify(data));
       
-      // Add photo if available
-      if (photoFile) {
-        formData.append('photo', photoFile);
+      // Add file if selected
+      if (selectedFile) {
+        formData.append("photo", selectedFile);
       }
-      
-      let res;
-      if (editingStudent?.id) {
-        res = await fetch(`/api/students/${editingStudent.id}`, {
-          method: 'PUT',
+
+      if (isEditMode && initialData?.id) {
+        // Update existing student with multipart form
+        const res = await fetch(`/api/students/${initialData.id}`, {
+          method: "PATCH",
           body: formData,
-          credentials: 'include',
+          credentials: "include",
         });
+        
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(errorData.message || "Failed to update student");
+        }
       } else {
-        res = await fetch('/api/students', {
-          method: 'POST',
+        // Create new student with multipart form
+        const res = await fetch("/api/students", {
+          method: "POST",
           body: formData,
-          credentials: 'include',
+          credentials: "include",
         });
+        
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(errorData.message || "Failed to create student");
+        }
       }
-      
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(errorText || res.statusText);
-      }
-      
-      return await res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/dashboard/stats'] });
+
+      // Invalidate students query
+      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
+
       toast({
-        title: editingStudent ? "Student Updated" : "Student Added",
-        description: `Student has been ${editingStudent ? "updated" : "added"} successfully.`,
+        title: isEditMode ? "Student updated" : "Student created",
+        description: isEditMode
+          ? "The student has been updated successfully"
+          : "The student has been created successfully",
       });
-      onClose();
-    },
-    onError: (error) => {
+
+      // Call success callback
+      if (onSuccess) onSuccess();
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || "Something went wrong",
         variant: "destructive",
       });
-    },
-  });
-
-  const onSubmit = (values: StudentFormValues) => {
-    // Add the file to the values
-    values.photoFile = photoFile;
-    mutation.mutate(values);
-  };
-
-  const handlePhotoChange = (file: File | null) => {
-    setPhotoFile(file);
-    
-    // Create preview URL
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    } finally {
+      setIsLoading(false);
     }
   };
 
+  const handleFileSelect = (file: File) => {
+    setSelectedFile(file);
+  };
+
+  const handleFileClear = () => {
+    setSelectedFile(null);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{editingStudent ? "Edit Student" : "Add New Student"}</DialogTitle>
-        </DialogHeader>
-        
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-6">
             <FormField
               control={form.control}
               name="name"
@@ -156,62 +151,59 @@ export function StudentForm({ open, onClose, editingStudent }: StudentFormProps)
                 <FormItem>
                   <FormLabel>Full Name</FormLabel>
                   <FormControl>
-                    <Input placeholder="Enter student name" {...field} />
+                    <Input placeholder="Student name" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="age"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Age</FormLabel>
+
+            <FormField
+              control={form.control}
+              name="age"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Age</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={3}
+                      max={5}
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value, 10))}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="classType"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Class</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    defaultValue={field.value}
+                  >
                     <FormControl>
-                      <Input 
-                        type="number" 
-                        min={3} 
-                        max={5} 
-                        placeholder="3-5 years" 
-                        {...field} 
-                        onChange={(e) => field.onChange(parseInt(e.target.value))}
-                      />
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select class" />
+                      </SelectTrigger>
                     </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              
-              <FormField
-                control={form.control}
-                name="class"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Class</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select class" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="Nursery">Nursery</SelectItem>
-                        <SelectItem value="LKG">LKG</SelectItem>
-                        <SelectItem value="UKG">UKG</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-            
+                    <SelectContent>
+                      <SelectItem value="nursery">Nursery</SelectItem>
+                      <SelectItem value="lkg">LKG</SelectItem>
+                      <SelectItem value="ukg">UKG</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <FormField
               control={form.control}
               name="parentContact"
@@ -219,141 +211,77 @@ export function StudentForm({ open, onClose, editingStudent }: StudentFormProps)
                 <FormItem>
                   <FormLabel>Parent Contact (Optional)</FormLabel>
                   <FormControl>
-                    <Input placeholder="Enter parent phone number" {...field} />
+                    <Input placeholder="Parent phone number" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="learningAbility"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Learning Ability</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select ability" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="Talented">Talented</SelectItem>
-                        <SelectItem value="Average">Average</SelectItem>
-                        <SelectItem value="Slow Learner">Slow Learner</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              
-              <FormField
-                control={form.control}
-                name="writingSpeed"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Writing Speed</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select writing speed" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="Speed Writing">Speed Writing</SelectItem>
-                        <SelectItem value="Slow Writing">Slow Writing</SelectItem>
-                        <SelectItem value="N/A">Not Applicable</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      Optional for Nursery
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-            
+          </div>
+
+          <div className="space-y-6">
             <FormField
               control={form.control}
-              name="notes"
+              name="learningAbility"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Notes (Optional)</FormLabel>
-                  <FormControl>
-                    <Textarea placeholder="Add any additional notes" {...field} />
-                  </FormControl>
+                  <FormLabel>Learning Ability</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    defaultValue={field.value}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select ability" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="talented">Talented</SelectItem>
+                      <SelectItem value="average">Average</SelectItem>
+                      <SelectItem value="slow_learner">Slow Learner</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
+
             <FormField
               control={form.control}
-              name="photoUrl"
+              name="writingSpeed"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Photo</FormLabel>
-                  <div className="mt-1 flex items-center">
-                    {photoPreview ? (
-                      <div className="relative">
-                        <img 
-                          src={photoPreview} 
-                          alt="Student preview" 
-                          className="h-24 w-24 rounded-full object-cover border-2 border-white shadow"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-red-500 text-white hover:bg-red-600 p-0"
-                          type="button"
-                          onClick={() => {
-                            setPhotoPreview(null);
-                            setPhotoFile(null);
-                            field.onChange('');
-                          }}
-                        >
-                          ✕
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="h-24 w-24 rounded-full bg-gray-100 flex items-center justify-center">
-                        <span className="text-3xl text-gray-300">👤</span>
-                      </div>
-                    )}
-                    <CloudinaryUpload 
-                      onFileSelect={handlePhotoChange} 
-                      maxSize={1048576} // 1MB
-                      accept="image/jpeg,image/png"
-                    />
-                  </div>
-                  <FormDescription>
-                    Upload a photo (max 1MB, JPEG/PNG)
-                  </FormDescription>
+                  <FormLabel>Writing Speed</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    defaultValue={field.value}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select writing speed" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="speed_writing">Speed Writing</SelectItem>
+                      <SelectItem value="slow_writing">Slow Writing</SelectItem>
+                      <SelectItem value="not_applicable">Not Applicable</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            
-            {isAdmin && (
+
+            {user?.role === "admin" && (
               <FormField
                 control={form.control}
-                name="teacherId"
+                name="assignedTeacherId"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Assign Teacher</FormLabel>
                     <Select
-                      onValueChange={(value) => field.onChange(parseInt(value))}
-                      defaultValue={field.value?.toString() || ''}
+                      onValueChange={(value) => field.onChange(parseInt(value, 10))}
+                      defaultValue={field.value?.toString()}
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -361,9 +289,9 @@ export function StudentForm({ open, onClose, editingStudent }: StudentFormProps)
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {teachers?.map((teacher) => (
-                          <SelectItem key={teacher.id} value={teacher.id.toString()}>
-                            {teacher.name} ({teacher.assignedClasses?.join(', ')})
+                        {teachers.map((teacher: any) => (
+                          <SelectItem key={teacher.user.id} value={teacher.user.id.toString()}>
+                            {teacher.user.name} ({teacher.assignedClasses.map((c: string) => c.toUpperCase()).join(", ")})
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -373,29 +301,49 @@ export function StudentForm({ open, onClose, editingStudent }: StudentFormProps)
                 )}
               />
             )}
-            
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onClose}
-                disabled={mutation.isPending}
-              >
-                Cancel
-              </Button>
-              <Button 
-                type="submit" 
-                disabled={mutation.isPending}
-              >
-                {mutation.isPending ? 
-                  (editingStudent ? "Updating..." : "Adding...") : 
-                  (editingStudent ? "Update Student" : "Add Student")
-                }
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notes (Optional)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Additional notes about the student"
+                      className="resize-none"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <FormLabel>Student Photo</FormLabel>
+          <FileUpload
+            onFileSelect={handleFileSelect}
+            onFileClear={handleFileClear}
+            accept="image/jpeg, image/png"
+            maxSize={1024 * 1024} // 1MB
+            previewUrl={initialData?.photoUrl}
+          />
+        </div>
+
+        <div className="flex justify-end space-x-4">
+          {onCancel && (
+            <Button variant="outline" type="button" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" disabled={isLoading}>
+            {isLoading ? "Saving..." : isEditMode ? "Update Student" : "Add Student"}
+          </Button>
+        </div>
+      </form>
+    </Form>
   );
 }

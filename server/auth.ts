@@ -5,7 +5,7 @@ import session from "express-session";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
-import { User, InsertUser, LoginUser } from "@shared/schema";
+import { User, InsertUser, loginSchema } from "@shared/schema";
 
 declare global {
   namespace Express {
@@ -30,12 +30,12 @@ async function comparePasswords(supplied: string, stored: string) {
 
 export function setupAuth(app: Express) {
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "nepal-central-high-school-secret",
+    secret: process.env.SESSION_SECRET || "nepal-central-school-secret",
     resave: false,
     saveUninitialized: false,
     store: storage.sessionStore,
     cookie: {
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
     }
   };
 
@@ -44,19 +44,21 @@ export function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // Configure local strategy
   passport.use(
     new LocalStrategy(
-      {
-        usernameField: "email",
-        passwordField: "password",
-      },
+      { usernameField: "email" },
       async (email, password, done) => {
         try {
           const user = await storage.getUserByEmail(email);
-          if (!user || !(await comparePasswords(password, user.password))) {
-            return done(null, false, { message: "Invalid email or password" });
+          if (!user) {
+            return done(null, false, { message: "Incorrect email or password" });
           }
+
+          const isValid = await comparePasswords(password, user.password);
+          if (!isValid) {
+            return done(null, false, { message: "Incorrect email or password" });
+          }
+
           return done(null, user);
         } catch (error) {
           return done(error);
@@ -65,7 +67,6 @@ export function setupAuth(app: Express) {
     )
   );
 
-  // Session serialization
   passport.serializeUser((user, done) => {
     done(null, user.id);
   });
@@ -79,35 +80,36 @@ export function setupAuth(app: Express) {
     }
   });
 
-  // Auth routes
   app.post("/api/register", async (req, res, next) => {
     try {
-      const existingUser = await storage.getUserByEmail(req.body.email);
+      const parsedData = loginSchema.safeParse(req.body);
+      if (!parsedData.success) {
+        return res.status(400).json({ message: parsedData.error.message });
+      }
+
+      const { email, password } = req.body;
+      const existingUser = await storage.getUserByEmail(email);
+
       if (existingUser) {
         return res.status(400).json({ message: "Email already in use" });
       }
 
+      const hashedPassword = await hashPassword(password);
       const userData: InsertUser = {
         ...req.body,
-        password: await hashPassword(req.body.password),
+        password: hashedPassword,
       };
 
-      const user = await storage.createUser(userData);
+      const newUser = await storage.createUser(userData);
       
-      // Create activity record
-      await storage.createActivity({
-        userId: user.id,
-        action: "User Registration",
-        details: `${user.name} (${user.role}) registered to the system`
-      });
+      // Remove password from the response
+      const { password: _, ...userWithoutPassword } = newUser;
 
-      // Log the user in
-      req.login(user, (err) => {
-        if (err) return next(err);
-        
-        // Remove password from response
-        const { password, ...userWithoutPassword } = user;
-        res.status(201).json(userWithoutPassword);
+      req.login(newUser, (err) => {
+        if (err) {
+          return next(err);
+        }
+        return res.status(201).json(userWithoutPassword);
       });
     } catch (error) {
       next(error);
@@ -116,47 +118,68 @@ export function setupAuth(app: Express) {
 
   app.post("/api/login", (req, res, next) => {
     passport.authenticate("local", (err, user, info) => {
-      if (err) return next(err);
-      if (!user) return res.status(401).json({ message: info?.message || "Invalid credentials" });
-      
-      req.login(user, async (loginErr) => {
-        if (loginErr) return next(loginErr);
+      if (err) {
+        return next(err);
+      }
+      if (!user) {
+        return res.status(401).json({ message: info.message || "Authentication failed" });
+      }
+      req.login(user, (err) => {
+        if (err) {
+          return next(err);
+        }
         
-        // Create activity record
-        await storage.createActivity({
-          userId: user.id,
-          action: "User Login",
-          details: `${user.name} logged into the system`
-        });
-        
-        // Remove password from response
+        // Remove password from the response
         const { password, ...userWithoutPassword } = user;
-        return res.status(200).json(userWithoutPassword);
+        return res.json(userWithoutPassword);
       });
     })(req, res, next);
   });
 
   app.post("/api/logout", (req, res, next) => {
-    // Create activity record if user is logged in
-    if (req.user) {
-      storage.createActivity({
-        userId: req.user.id,
-        action: "User Logout",
-        details: `${req.user.name} logged out of the system`
-      }).catch(console.error);
-    }
-    
     req.logout((err) => {
-      if (err) return next(err);
-      res.sendStatus(200);
+      if (err) {
+        return next(err);
+      }
+      res.status(200).json({ message: "Logged out successfully" });
     });
   });
 
   app.get("/api/user", (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
     
-    // Remove password from response
-    const { password, ...userWithoutPassword } = req.user;
+    // Remove password from the response
+    const { password, ...userWithoutPassword } = req.user as User;
     res.json(userWithoutPassword);
+  });
+
+  // Middleware for checking if user is authenticated
+  app.use("/api/admin/*", (req, res, next) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    
+    const user = req.user as User;
+    if (user.role !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    
+    next();
+  });
+
+  // Middleware for teacher routes
+  app.use("/api/teacher/*", (req, res, next) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    
+    const user = req.user as User;
+    if (user.role !== "teacher" && user.role !== "admin") {
+      return res.status(403).json({ message: "Teacher or admin access required" });
+    }
+    
+    next();
   });
 }
